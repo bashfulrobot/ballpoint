@@ -22,6 +22,13 @@ package tools
 import (
 	// Blank imports on purpose. Nothing calls these yet; they exist so
 	// `go mod tidy` keeps the versions pinned for issues #2, #3, and #5.
+	//
+	// go.mod carries lipgloss at an untagged pseudo-version. That is not an
+	// arbitrary pin: glamour v1.0.0 requires that exact commit, so pinning
+	// lipgloss to the v1.1.0 tag would downgrade glamour to v0.9.1. The commit
+	// is fixed by go.sum and the flake vendorHash, so nothing can substitute
+	// it. Issue #5 revisits the pin when it wires the TUI and can move the
+	// whole charm set to matching tagged releases at once.
 	_ "github.com/charmbracelet/bubbles/list"
 	_ "github.com/charmbracelet/bubbletea"
 	_ "github.com/charmbracelet/glamour"

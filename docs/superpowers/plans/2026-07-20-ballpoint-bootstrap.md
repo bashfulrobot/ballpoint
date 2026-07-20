@@ -942,9 +942,10 @@ git commit -m "feat: add home-manager module with package option"
 
 - [ ] **Step 1: Write the workflow**
 
-Actions are pinned to release tags rather than `@main` so a compromised
-upstream branch cannot alter this build. `permissions` is narrowed to the
-read access the job actually needs.
+Actions are pinned to a full commit SHA, not a tag. A tag is mutable, so
+pinning to one leaves a compromised upstream account free to repoint it at
+malicious code. Only a SHA is immutable. `permissions` is narrowed to the read
+access the job actually needs.
 
 ```yaml
 name: ci

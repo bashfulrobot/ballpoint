@@ -20,22 +20,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Third-party actions are pinned to a full commit SHA, not a tag. A tag
+      # is mutable, so a compromised upstream account could repoint it at
+      # malicious code that runs on every push to main. A SHA cannot be moved.
+      # Bump these deliberately (Dependabot or Renovate keep the version
+      # comment honest).
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v30
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
       # Backs onto the GitHub Actions cache, so it needs no repo secret. Keeps
-      # the Go dependency closure from rebuilding on every run.
+      # the Go dependency closure from rebuilding on every run. The cache key
+      # is the exact hash of flake.lock and go.sum with no loose restore
+      # fallback, so a lockfile change forces a clean rebuild rather than
+      # reusing a broadly matched entry.
       - name: Cache the Nix store
-        uses: nix-community/cache-nix-action@v7
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'go.sum') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
 
       - name: Build
         run: nix build --print-build-logs
