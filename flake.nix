@@ -38,6 +38,38 @@
           nativeBuildInputs = with pkgs; [ go gopls golangci-lint delve ];
         };
 
+        checks = {
+          # `nix flake check` does not evaluate homeManagerModules, so an eval
+          # error there would ship green and land on issue #4, which is the
+          # issue that has to extend the module. Evaluating it here forces
+          # both the option surface and the lazy package default.
+          hm-module =
+            let
+              evaluated = pkgs.lib.evalModules {
+                specialArgs = { inherit pkgs; };
+                modules = [
+                  # Stands in for the home-manager option this module sets,
+                  # so the check needs no home-manager input.
+                  {
+                    options.home.packages = pkgs.lib.mkOption {
+                      type = pkgs.lib.types.listOf pkgs.lib.types.package;
+                      default = [ ];
+                    };
+                  }
+                  (import ./nix/hm-module.nix { inherit self; })
+                  { programs.ballpoint.enable = true; }
+                ];
+              };
+
+              installed = pkgs.lib.head evaluated.config.home.packages;
+            in
+            pkgs.runCommand "check-hm-module" { } ''
+              test "${installed}" = "${self.packages.${system}.default}"
+              test -x "${installed}/bin/ballpoint"
+              touch $out
+            '';
+        };
+
         formatter = pkgs.nixpkgs-fmt;
       });
 }

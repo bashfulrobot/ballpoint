@@ -1,6 +1,11 @@
 package buildinfo
 
-import "testing"
+import (
+	"testing"
+
+	// Registers -update so `go test ./... -update` works here too.
+	_ "github.com/bashfulrobot/ballpoint/internal/golden"
+)
 
 func TestString(t *testing.T) {
 	tests := []struct {

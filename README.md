@@ -42,15 +42,27 @@ nix build && ./result/bin/ballpoint --version
 Golden files under `testdata/` are regenerated with `go test ./... -update`.
 Review the diff before committing.
 
+The `-update` flag and the comparison helper live in `internal/golden`, not in
+the package under test. `go test ./...` passes every flag to every test
+binary, so a flag registered in one package makes `go test ./... -update` fail
+in all the others. Test packages with no golden files of their own blank
+import `internal/golden` to keep the flag universally defined.
+
 ### After changing dependencies
 
 `nix/ballpoint.nix` pins a `vendorHash` covering the module graph, so any
 `go.mod` change invalidates it. Set it to `lib.fakeHash`, run `nix build`, and
 copy the hash from the mismatch error.
 
-`internal/tui/deps.go` sits behind a `tools` build tag and holds the only
-imports of the Charm libraries. It looks unused and is not: deleting it drops
-those pins on the next `go mod tidy`.
+`internal/tools/tools.go` sits behind a `tools` build tag and holds the only
+imports of the Charm libraries, errgroup, and the rate limiter. It looks
+unused and is not: deleting it drops those pins on the next `go mod tidy`. CI
+compiles it with `go build -tags tools ./...` and lints it with the same tag,
+so a broken import there fails rather than passing unnoticed.
+
+`nix/ballpoint.nix` builds from an explicit file allowlist (`cmd`, `internal`,
+`go.mod`, `go.sum`). Adding a new top level directory that Go needs means
+adding it to that fileset.
 
 ## State
 

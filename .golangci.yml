@@ -1,5 +1,12 @@
 version: "2"
 
+run:
+  # internal/tools/tools.go is the only file behind this tag, and it is the
+  # file holding the dependency pins. Without the tag nothing type-checks it,
+  # so a broken import there would pass every check.
+  build-tags:
+    - tools
+
 linters:
   # The standard set is errcheck, govet, ineffassign, staticcheck, and unused.
   default: standard

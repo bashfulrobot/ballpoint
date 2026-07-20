@@ -12,7 +12,19 @@ buildGoModule {
   pname = "ballpoint";
   inherit version;
 
-  src = lib.cleanSource ../.;
+  # An explicit allowlist rather than cleanSource. cleanSource strips .git but
+  # keeps everything else, so a docs-only change rebuilt the whole Go tree,
+  # and building from the main checkout swept in .claude/worktrees, which
+  # holds full copies of the repo.
+  src = lib.fileset.toSource {
+    root = ../.;
+    fileset = lib.fileset.unions [
+      ../cmd
+      ../internal
+      ../go.mod
+      ../go.sum
+    ];
+  };
 
   # Regenerate after any go.mod change: set this to lib.fakeHash, run
   # `nix build`, and copy the hash from the mismatch error.

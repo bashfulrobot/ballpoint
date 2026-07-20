@@ -10,6 +10,16 @@
 
 let
   cfg = config.programs.ballpoint;
+
+  system = pkgs.stdenv.hostPlatform.system;
+
+  # A bare self.packages.${system}.default throws a missing-attribute error
+  # that names neither ballpoint nor the option to set instead.
+  defaultPackage =
+    self.packages.${system}.default or (throw ''
+      ballpoint provides no package for ${system}.
+      Set programs.ballpoint.package to a package you build yourself.
+    '');
 in
 {
   options.programs.ballpoint = {
@@ -17,7 +27,7 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+      default = defaultPackage;
       defaultText = lib.literalExpression "ballpoint.packages.\${system}.default";
       description = ''
         The ballpoint package to install. Defaults to the build from the

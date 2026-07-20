@@ -3,38 +3,11 @@ package cli
 import (
 	"bytes"
 	"errors"
-	"flag"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/bashfulrobot/ballpoint/internal/buildinfo"
+	"github.com/bashfulrobot/ballpoint/internal/golden"
 )
-
-var update = flag.Bool("update", false, "rewrite golden files with current output")
-
-// assertGolden compares got against testdata/<name>, rewriting it when the
-// suite runs with -update. Later issues follow this convention.
-func assertGolden(t *testing.T, name, got string) {
-	t.Helper()
-
-	path := filepath.Join("testdata", name)
-
-	if *update {
-		if err := os.WriteFile(path, []byte(got), 0o600); err != nil {
-			t.Fatalf("writing golden %s: %v", path, err)
-		}
-	}
-
-	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading golden %s: %v", path, err)
-	}
-
-	if got != string(want) {
-		t.Errorf("output mismatch for %s\n got: %q\nwant: %q", name, got, want)
-	}
-}
 
 // Every wired but unbuilt subcommand must report ErrNotImplemented so main
 // exits non-zero. A systemd timer must not record success for work that never
@@ -57,6 +30,40 @@ func TestRunNotImplemented(t *testing.T) {
 
 			if !errors.Is(err, ErrNotImplemented) {
 				t.Errorf("Run(%q) error = %v, want ErrNotImplemented", tt.args, err)
+			}
+		})
+	}
+}
+
+// flag stops parsing at the first positional, so anything after a subcommand
+// is invisible to the FlagSet. A typo'd flag in issue #4's systemd unit must
+// fail loudly rather than silently running the verb with defaults.
+func TestRunRejectsStrayArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "flag after a subcommand", args: []string{"probe", "--nonexistent"}},
+		{name: "argument after a subcommand", args: []string{"dispatch", "extra"}},
+		{name: "argument after --version", args: []string{"--version", "dispatch"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+
+			err := Run(tt.args, &stdout, &stderr)
+
+			if err == nil {
+				t.Fatalf("Run(%q) error = nil, want a stray-argument error", tt.args)
+			}
+
+			if errors.Is(err, ErrNotImplemented) {
+				t.Errorf("Run(%q) reported ErrNotImplemented instead of rejecting the stray argument", tt.args)
+			}
+
+			if stdout.Len() != 0 {
+				t.Errorf("Run(%q) wrote %q to stdout, want nothing", tt.args, stdout.String())
 			}
 		})
 	}
@@ -119,5 +126,5 @@ func TestRunHelp(t *testing.T) {
 		t.Fatalf("Run() error = %v, want nil for --help", err)
 	}
 
-	assertGolden(t, "usage.golden", stderr.String())
+	golden.Assert(t, "usage.golden", stderr.String())
 }

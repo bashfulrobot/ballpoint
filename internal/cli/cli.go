@@ -50,7 +50,13 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	rest := fs.Args()
+
 	if *showVersion {
+		if len(rest) > 0 {
+			return fmt.Errorf("--version takes no arguments, got %q", rest)
+		}
+
 		// This is the command's actual output rather than a diagnostic, so a
 		// failed write is a failure of the command.
 		if _, err := fmt.Fprintln(stdout, buildinfo.String()); err != nil {
@@ -58,6 +64,14 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		}
 
 		return nil
+	}
+
+	// flag stops parsing at the first positional, so a flag written after the
+	// subcommand never reaches this FlagSet and would otherwise be dropped in
+	// silence. Reject the extra arguments instead. Per-verb FlagSets arrive
+	// with the first verb that actually takes flags.
+	if len(rest) > 1 {
+		return fmt.Errorf("%s takes no arguments, got %q", rest[0], rest[1:])
 	}
 
 	switch cmd := fs.Arg(0); cmd {
