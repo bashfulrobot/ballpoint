@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/bashfulrobot/ballpoint/internal/buildinfo"
@@ -70,16 +71,34 @@ func TestRunRejectsStrayArguments(t *testing.T) {
 }
 
 func TestRunUnknownCommand(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-
-	err := Run([]string{"nope"}, &stdout, &stderr)
-
-	if err == nil {
-		t.Fatal("Run() error = nil, want an unknown-command error")
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "bare unknown verb", args: []string{"nope"}},
+		// A mistyped verb with trailing arguments must still be reported as
+		// unknown, not as a verb that takes no arguments.
+		{name: "unknown verb with trailing arguments", args: []string{"nope", "extra"}},
 	}
 
-	if errors.Is(err, ErrNotImplemented) {
-		t.Error("Run() reported ErrNotImplemented for an unknown command")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+
+			err := Run(tt.args, &stdout, &stderr)
+
+			if err == nil {
+				t.Fatalf("Run(%q) error = nil, want an unknown-command error", tt.args)
+			}
+
+			if errors.Is(err, ErrNotImplemented) {
+				t.Errorf("Run(%q) reported ErrNotImplemented for an unknown command", tt.args)
+			}
+
+			if got := err.Error(); !strings.Contains(got, "unknown command") {
+				t.Errorf("Run(%q) error = %q, want it to name the command as unknown", tt.args, got)
+			}
+		})
 	}
 }
 

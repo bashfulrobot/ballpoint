@@ -66,21 +66,21 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
-	// flag stops parsing at the first positional, so a flag written after the
-	// subcommand never reaches this FlagSet and would otherwise be dropped in
-	// silence. Reject the extra arguments instead. Per-verb FlagSets arrive
-	// with the first verb that actually takes flags.
-	if len(rest) > 1 {
-		return fmt.Errorf("%s takes no arguments, got %q", rest[0], rest[1:])
-	}
-
 	switch cmd := fs.Arg(0); cmd {
 	case "":
 		return fmt.Errorf("triage walk: %w", ErrNotImplemented)
-	case "probe":
-		return fmt.Errorf("probe: %w", ErrNotImplemented)
-	case "dispatch":
-		return fmt.Errorf("dispatch: %w", ErrNotImplemented)
+	case "probe", "dispatch":
+		// flag stops parsing at the first positional, so a flag written after
+		// the subcommand never reaches this FlagSet and would otherwise be
+		// dropped in silence. Reject the extra arguments instead. This lives
+		// inside the known-command case so a mistyped verb still gets told it
+		// is unknown. Per-verb FlagSets arrive with the first verb that
+		// actually takes flags.
+		if len(rest) > 1 {
+			return fmt.Errorf("%s takes no arguments, got %q", cmd, rest[1:])
+		}
+
+		return fmt.Errorf("%s: %w", cmd, ErrNotImplemented)
 	default:
 		// The unknown command is the error worth reporting, so a failed
 		// usage write is deliberately not allowed to mask it.

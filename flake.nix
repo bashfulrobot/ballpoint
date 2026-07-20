@@ -39,6 +39,16 @@
         };
 
         checks = {
+          # packages.default sets subPackages to cmd/ballpoint, which has no
+          # tests, so its check phase reports "no test files" and stops.
+          # Anyone running `nix flake check` locally would otherwise see green
+          # having tested nothing.
+          go-test = pkgs.ballpoint.overrideAttrs (old: {
+            pname = "${old.pname}-tests";
+            subPackages = null;
+            doCheck = true;
+          });
+
           # `nix flake check` does not evaluate homeManagerModules, so an eval
           # error there would ship green and land on issue #4, which is the
           # issue that has to extend the module. Evaluating it here forces

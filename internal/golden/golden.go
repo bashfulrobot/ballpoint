@@ -1,33 +1,34 @@
 // Package golden compares test output against files under testdata.
 //
-// The -update flag lives here rather than in one test package because
-// `go test ./...` passes every flag to every test binary. A flag registered
-// in a single package makes `go test ./... -update` fail in all the others.
-// Any test package that links this one therefore accepts -update, which is
-// why packages with no golden files of their own still blank import it.
+// Regeneration is driven by BALLPOINT_UPDATE_GOLDEN rather than a -update
+// flag. `go test ./...` hands every flag to every test binary, so a flag
+// registered in one package makes `go test ./... -update` fail in all the
+// others. Registering it everywhere would work but leaves a contract each new
+// test package has to remember, and nothing would catch a package that
+// forgot. An environment variable needs no registration and no contract.
 //
-// Test-only. Nothing in cmd/ or the rest of internal/ imports this, so the
-// testing dependency never reaches the shipped binary.
+// Test-only. Nothing outside _test.go files imports this, so the testing
+// dependency never reaches the shipped binary.
 package golden
 
 import (
-	"flag"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-var update = flag.Bool("update", false, "rewrite golden files with current output")
+// updateEnv is the variable that switches Assert from comparing to rewriting.
+const updateEnv = "BALLPOINT_UPDATE_GOLDEN"
 
-// Assert compares got against testdata/<name>, rewriting that file when the
-// suite runs with -update.
+// Assert compares got against testdata/<name>. Setting BALLPOINT_UPDATE_GOLDEN
+// to a non-empty value rewrites that file instead.
 func Assert(t *testing.T, name, got string) {
 	t.Helper()
 
 	path := filepath.Join("testdata", name)
 
-	if *update {
-		if err := os.WriteFile(path, []byte(got), 0o644); err != nil { //nolint:gosec // a checked-in fixture is world readable by design
+	if os.Getenv(updateEnv) != "" {
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
 			t.Fatalf("writing golden %s: %v", path, err)
 		}
 	}
@@ -38,6 +39,6 @@ func Assert(t *testing.T, name, got string) {
 	}
 
 	if got != string(want) {
-		t.Errorf("output mismatch for %s\n got: %q\nwant: %q\nrerun with -update to accept", name, got, want)
+		t.Errorf("output mismatch for %s\n got: %q\nwant: %q\nrerun with %s=1 to accept", name, got, want, updateEnv)
 	}
 }

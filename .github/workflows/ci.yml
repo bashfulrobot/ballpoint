@@ -8,11 +8,12 @@ on:
 permissions:
   contents: read
 
-# A superseded run has nothing left to say, so cancel it rather than paying
-# for a second full Nix build.
+# A superseded PR run has nothing left to say, so cancel it rather than paying
+# for a second full Nix build. Pushes to main are never cancelled: two commits
+# landing close together would otherwise leave the first with no completed run.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   check:
@@ -27,6 +28,14 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+
+      # Backs onto the GitHub Actions cache, so it needs no repo secret. Keeps
+      # the Go dependency closure from rebuilding on every run.
+      - name: Cache the Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'go.sum') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
 
       - name: Build
         run: nix build --print-build-logs
