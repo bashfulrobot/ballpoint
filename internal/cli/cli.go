@@ -33,7 +33,10 @@ Flags:
 func Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("ballpoint", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, usage) }
+	// flag's Usage callback cannot report an error, and a caller that loses
+	// this diagnostic still gets the returned error, so the write is
+	// deliberately unchecked.
+	fs.Usage = func() { _, _ = fmt.Fprint(stderr, usage) }
 
 	showVersion := fs.Bool("version", false, "print the build version and exit")
 
@@ -48,7 +51,12 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	if *showVersion {
-		fmt.Fprintln(stdout, buildinfo.String())
+		// This is the command's actual output rather than a diagnostic, so a
+		// failed write is a failure of the command.
+		if _, err := fmt.Fprintln(stdout, buildinfo.String()); err != nil {
+			return fmt.Errorf("writing version: %w", err)
+		}
+
 		return nil
 	}
 
@@ -60,7 +68,10 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	case "dispatch":
 		return fmt.Errorf("dispatch: %w", ErrNotImplemented)
 	default:
-		fmt.Fprint(stderr, usage)
+		// The unknown command is the error worth reporting, so a failed
+		// usage write is deliberately not allowed to mask it.
+		_, _ = fmt.Fprint(stderr, usage)
+
 		return fmt.Errorf("unknown command %q", cmd)
 	}
 }

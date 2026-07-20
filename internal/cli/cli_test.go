@@ -93,6 +93,25 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
+// errWriter fails every write, standing in for a closed pipe.
+type errWriter struct{ err error }
+
+func (w errWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// Losing --version output to a closed stdout must surface as an error rather
+// than a silent success.
+func TestRunVersionWriteFailure(t *testing.T) {
+	sentinel := errors.New("stdout closed")
+
+	var stderr bytes.Buffer
+
+	err := Run([]string{"--version"}, errWriter{err: sentinel}, &stderr)
+
+	if !errors.Is(err, sentinel) {
+		t.Errorf("Run() error = %v, want it to wrap %v", err, sentinel)
+	}
+}
+
 func TestRunHelp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
