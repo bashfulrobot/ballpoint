@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build
+        run: nix build --print-build-logs
+
+      - name: Test
+        run: nix develop --command go test ./...
+
+      - name: Lint
+        run: nix develop --command golangci-lint run
+
+      - name: Verify the version stamp
+        run: |
+          version="$(./result/bin/ballpoint --version)"
+          echo "ballpoint --version reported: ${version}"
+          test -n "${version}"
+          test "${version}" != "dev"
