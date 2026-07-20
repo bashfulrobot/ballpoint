@@ -1,0 +1,10 @@
+ballpoint drives Todoist triage.
+
+Usage:
+  ballpoint            walk the triage queue
+  ballpoint probe      refresh freshness data
+  ballpoint dispatch   run queued work
+
+Flags:
+  --version   print the build version and exit
+  --help      print this message and exit
