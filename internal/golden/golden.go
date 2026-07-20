@@ -28,6 +28,12 @@ func Assert(t *testing.T, name, got string) {
 	path := filepath.Join("testdata", name)
 
 	if os.Getenv(updateEnv) != "" {
+		// Announce the rewrite loudly. A stray BALLPOINT_UPDATE_GOLDEN left in
+		// a shell profile would otherwise rewrite fixtures during an ordinary
+		// test run and keep the suite green, laundering a regression into the
+		// golden file without anyone noticing.
+		t.Logf("%s is set, rewriting golden %s", updateEnv, path)
+
 		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
 			t.Fatalf("writing golden %s: %v", path, err)
 		}

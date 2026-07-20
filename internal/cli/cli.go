@@ -27,6 +27,16 @@ Flags:
   --help      print this message and exit
 `
 
+// displayName labels a verb in error messages. The bare walk has no verb, so
+// it reads as "the triage walk" rather than an empty string.
+func displayName(cmd string) string {
+	if cmd == "" {
+		return "the triage walk"
+	}
+
+	return cmd
+}
+
 // Run executes the command named by args, which excludes the program name.
 // Normal output goes to stdout and diagnostics to stderr so callers, and
 // tests, can capture them independently.
@@ -66,26 +76,34 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
-	switch cmd := fs.Arg(0); cmd {
-	case "":
-		return fmt.Errorf("triage walk: %w", ErrNotImplemented)
-	case "probe", "dispatch":
-		// flag stops parsing at the first positional, so a flag written after
-		// the subcommand never reaches this FlagSet and would otherwise be
-		// dropped in silence. Reject the extra arguments instead. This lives
-		// inside the known-command case so a mistyped verb still gets told it
-		// is unknown. Per-verb FlagSets arrive with the first verb that
-		// actually takes flags.
-		if len(rest) > 1 {
-			return fmt.Errorf("%s takes no arguments, got %q", cmd, rest[1:])
-		}
+	cmd := fs.Arg(0)
 
-		return fmt.Errorf("%s: %w", cmd, ErrNotImplemented)
+	// An unknown verb is the error worth reporting, so check it before the
+	// stray-argument guard. Otherwise a mistyped verb with a trailing token
+	// would be told it "takes no arguments", implying the verb exists.
+	switch cmd {
+	case "", "probe", "dispatch":
 	default:
-		// The unknown command is the error worth reporting, so a failed
-		// usage write is deliberately not allowed to mask it.
+		// A failed usage write is deliberately not allowed to mask the real
+		// error.
 		_, _ = fmt.Fprint(stderr, usage)
 
 		return fmt.Errorf("unknown command %q", cmd)
+	}
+
+	// flag stops parsing at the first positional, so a flag or argument
+	// written after the verb never reaches this FlagSet and would otherwise be
+	// dropped in silence. Reject the extras. This covers the bare walk too
+	// (cmd is the empty string), so a stray token there does not vanish.
+	// Per-verb FlagSets arrive with the first verb that actually takes flags.
+	if len(rest) > 1 {
+		return fmt.Errorf("%s takes no arguments, got %q", displayName(cmd), rest[1:])
+	}
+
+	switch cmd {
+	case "":
+		return fmt.Errorf("triage walk: %w", ErrNotImplemented)
+	default:
+		return fmt.Errorf("%s: %w", cmd, ErrNotImplemented)
 	}
 }

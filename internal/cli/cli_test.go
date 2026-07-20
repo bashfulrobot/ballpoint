@@ -47,6 +47,9 @@ func TestRunRejectsStrayArguments(t *testing.T) {
 		{name: "flag after a subcommand", args: []string{"probe", "--nonexistent"}},
 		{name: "argument after a subcommand", args: []string{"dispatch", "extra"}},
 		{name: "argument after --version", args: []string{"--version", "dispatch"}},
+		// The bare walk has an empty first argument, so a trailing token must
+		// not slip past the stray-argument guard.
+		{name: "argument after an explicit empty verb", args: []string{"", "extra"}},
 	}
 
 	for _, tt := range tests {
