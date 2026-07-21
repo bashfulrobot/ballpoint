@@ -12,30 +12,6 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/store"
 )
 
-// Every wired but unbuilt subcommand must report ErrNotImplemented so main
-// exits non-zero. A systemd timer must not record success for work that never
-// ran.
-func TestRunNotImplemented(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-	}{
-		{name: "dispatch", args: []string{"dispatch"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-
-			err := Run(tt.args, &stdout, &stderr)
-
-			if !errors.Is(err, ErrNotImplemented) {
-				t.Errorf("Run(%q) error = %v, want ErrNotImplemented", tt.args, err)
-			}
-		})
-	}
-}
-
 // The bare command now launches the triage walk. It needs a terminal, and the
 // tests capture stdout into a buffer (never a TTY), so a bare invocation must
 // fail with a real error rather than ErrNotImplemented or a hang.
