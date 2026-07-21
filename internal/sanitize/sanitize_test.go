@@ -46,14 +46,26 @@ func TestStripsBidiControls(t *testing.T) {
 	}
 }
 
-// Zero-width characters and the BOM must be dropped, so hidden runs cannot break
-// up an identifier or smuggle invisible content.
-func TestStripsZeroWidthAndBOM(t *testing.T) {
-	zw := []rune{0x200b, 0x200c, 0x200d, 0xfeff}
-	for _, r := range zw {
+// Zero-width characters, joiners, directional marks, and the BOM must be
+// dropped, so hidden runs cannot break up an identifier, smuggle invisible
+// content, or shift local visual order.
+func TestStripsZeroWidthAndMarks(t *testing.T) {
+	invisible := []rune{
+		0x200b, 0x200c, 0x200d, // zero-width space, non-joiner, joiner
+		0x200e, 0x200f, // left-to-right and right-to-left marks
+		0x061c,         // Arabic letter mark
+		0x2060,         // word joiner
+		0x2061, 0x2064, // invisible operators (bounds of the range)
+		0x180e, // Mongolian vowel separator
+		0xfeff, // BOM / zero-width no-break space
+	}
+	for _, r := range invisible {
 		in := "no" + string(r) + "gap"
 		if got := Line(in); got != "nogap" {
-			t.Errorf("Line did not strip zero-width %U: got %q", r, got)
+			t.Errorf("Line did not strip invisible %U: got %q", r, got)
+		}
+		if got := Block(in); got != "nogap" {
+			t.Errorf("Block did not strip invisible %U: got %q", r, got)
 		}
 	}
 }
