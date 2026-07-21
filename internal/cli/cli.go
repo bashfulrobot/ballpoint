@@ -19,7 +19,8 @@ const usage = `ballpoint drives Todoist triage.
 
 Usage:
   ballpoint                              walk the triage queue
-  ballpoint probe [--dry-run] [--benchmark]  refresh freshness data
+  ballpoint probe [--dry-run] [--benchmark] [--secrets-path PATH] [--concurrency N]
+                                         refresh freshness data
   ballpoint dispatch                     run queued work
 
 Flags:
@@ -35,6 +36,37 @@ func displayName(cmd string) string {
 	}
 
 	return cmd
+}
+
+// probeFlags are the parsed flags of the probe subcommand.
+type probeFlags struct {
+	dryRun      bool
+	benchmark   bool
+	secretsPath string // empty means the off-store default
+	concurrency int    // zero means the Todoist client default
+}
+
+// parseProbeFlags parses the probe subcommand's own FlagSet. helped is true when
+// the caller asked for --help, which flag has already written, so Run returns
+// nil without running the probe.
+func parseProbeFlags(args []string, stderr io.Writer) (flags probeFlags, helped bool, err error) {
+	pf := flag.NewFlagSet("probe", flag.ContinueOnError)
+	pf.SetOutput(stderr)
+	pf.BoolVar(&flags.dryRun, "dry-run", false, "report planned per-system calls without probing or writing watermarks")
+	pf.BoolVar(&flags.benchmark, "benchmark", false, "time the real pass and print the wall clock")
+	pf.StringVar(&flags.secretsPath, "secrets-path", "", "path to the off-store secrets file (default ~/.config/nixos-secrets/secrets.json)")
+	pf.IntVar(&flags.concurrency, "concurrency", 0, "bounded Todoist fetch concurrency (default 12)")
+
+	if err := pf.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return probeFlags{}, true, nil
+		}
+		return probeFlags{}, false, err
+	}
+	if pf.NArg() > 0 {
+		return probeFlags{}, false, fmt.Errorf("probe takes no positional arguments, got %q", pf.Args())
+	}
+	return flags, false, nil
 }
 
 // Run executes the command named by args, which excludes the program name.
@@ -91,24 +123,15 @@ func Run(args []string, stdout, stderr io.Writer) error {
 
 		return fmt.Errorf("triage walk: %w", ErrNotImplemented)
 	case "probe":
-		pf := flag.NewFlagSet("probe", flag.ContinueOnError)
-		pf.SetOutput(stderr)
-		dryRun := pf.Bool("dry-run", false, "report planned per-system calls without probing or writing watermarks")
-		benchmark := pf.Bool("benchmark", false, "time the real pass and print the wall clock")
-
-		if err := pf.Parse(rest[1:]); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				return nil
-			}
-
+		f, helped, err := parseProbeFlags(rest[1:], stderr)
+		if err != nil {
 			return err
 		}
-
-		if pf.NArg() > 0 {
-			return fmt.Errorf("probe takes no positional arguments, got %q", pf.Args())
+		if helped {
+			return nil
 		}
 
-		deps, err := resolveProbeDeps(*dryRun, *benchmark)
+		deps, err := resolveProbeDeps(f)
 		if err != nil {
 			return err
 		}

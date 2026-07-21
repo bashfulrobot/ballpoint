@@ -34,14 +34,14 @@ type probeDeps struct {
 // stays testable with injected tasks. A missing per-source credential is not
 // fatal; that source renders unchecked. The Todoist token is required because
 // it provides the task corpus every run works from.
-func resolveProbeDeps(dryRun, benchmark bool) (probeDeps, error) {
+func resolveProbeDeps(f probeFlags) (probeDeps, error) {
 	dir, err := config.StateDir()
 	if err != nil {
 		return probeDeps{}, err
 	}
-	deps := probeDeps{stateDir: dir, dryRun: dryRun, benchmark: benchmark}
+	deps := probeDeps{stateDir: dir, dryRun: f.dryRun, benchmark: f.benchmark}
 
-	path, err := secrets.DefaultPath()
+	path, err := secretsPathOrDefault(f.secretsPath)
 	if err != nil {
 		return probeDeps{}, err
 	}
@@ -56,12 +56,22 @@ func resolveProbeDeps(dryRun, benchmark bool) (probeDeps, error) {
 	if err != nil {
 		return probeDeps{}, fmt.Errorf("loading todoist token: %w", err)
 	}
-	delta, err := todoist.New(token).Probe(context.Background(), sources.Watermark{})
+	delta, err := todoist.New(token, todoist.WithConcurrency(f.concurrency)).Probe(context.Background(), sources.Watermark{})
 	if err != nil {
 		return probeDeps{}, fmt.Errorf("fetching tasks: %w", err)
 	}
 	deps.tasks = delta.Tasks
 	return deps, nil
+}
+
+// secretsPathOrDefault returns the explicit path when set, otherwise the
+// off-store default. A flag override lets a systemd unit point at a per-host
+// secrets file without an environment variable.
+func secretsPathOrDefault(path string) (string, error) {
+	if path != "" {
+		return path, nil
+	}
+	return secrets.DefaultPath()
 }
 
 // runProbe executes the probe. In dry-run it prints the planned per-system call
