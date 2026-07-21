@@ -132,6 +132,10 @@ func (c *Client) Probe(ctx context.Context, ls []links.Link, _ sources.Watermark
 		case rec == "":
 			out[l.Key()] = probe.Result{Unchecked: true, Reason: probe.ReasonUnparseable}
 		case sfCaseCharset.MatchString(rec):
+			// An all-digit record is a Case number. An 18-char id can never be
+			// all-digit (its checksum suffix carries letters) and all-digit
+			// 15-char ids do not occur in practice, so a numeric record here is
+			// unambiguously a Case number, not an id.
 			caseNumbers = append(caseNumbers, l)
 		case !sfIDCharset.MatchString(rec):
 			// The record reached us but is neither a clean id nor a Case number,
@@ -186,16 +190,29 @@ func (c *Client) queryIDs(ctx context.Context, object string, group []links.Link
 	}
 	byID := map[string]sfRecord{}
 	for _, r := range env.Result.Records {
-		byID[r.ID] = r
+		byID[canonicalID(r.ID)] = r
 	}
 	for _, l := range group {
-		r, seen := byID[l.Record]
+		r, seen := byID[canonicalID(l.Record)]
 		if !seen {
 			out[l.Key()] = probe.Result{Unchecked: true, Reason: probe.ReasonError}
 			continue
 		}
 		out[l.Key()] = parseActivity(r.LastModifiedDate)
 	}
+}
+
+// canonicalID reduces a Salesforce id to its 15-char case-sensitive prefix. A
+// 15-char id and its 18-char form share that prefix byte for byte (the extra 3
+// chars are a case-insensitive checksum), and `sf data query` always returns the
+// 18-char Id even when the filter used a 15-char id. Matching on this prefix is
+// what lets a link whose record is the 15-char form (a classic record URL, an
+// old-UI paste) find the record the query returned.
+func canonicalID(id string) string {
+	if len(id) >= 15 {
+		return id[:15]
+	}
+	return id
 }
 
 // queryCases runs one `SELECT CaseNumber, LastModifiedDate FROM Case WHERE
@@ -267,16 +284,28 @@ func (c *Client) runQuery(ctx context.Context, soql string) (sfEnvelope, probe.R
 	return env, "", true
 }
 
-// isAuthFailure reports whether an `sf` error names a missing or expired org
-// authorization rather than a query problem.
+// authErrorNames are the `sf` error `name` values that mean a missing or
+// expired org authorization rather than a query problem. Matching the structured
+// name avoids the false positives of scanning the free-text message, where a
+// query error can legitimately mention "session", "login", or "expired" (a bad
+// field on LoginHistory, a Session_Id__c column, a value validation on the word
+// "Expired") without being an auth failure at all.
+var authErrorNames = []string{
+	"noorgfound", "namedorgnotfound", "nodefaultenv", "notloggedin",
+	"refreshtokenauth", "authinfo", "authorizationrequired", "authenticationrequired",
+}
+
+// isAuthFailure reports whether an `sf` error is an auth failure. It keys off the
+// structured error name, plus the one unambiguous message phrase the CLI emits
+// for a missing org, so the ReasonAuth vs ReasonError label stays trustworthy.
 func isAuthFailure(name, message string) bool {
-	hay := strings.ToLower(name + " " + message)
-	for _, kw := range []string{"authorization", "authenticate", "no org", "not been authorized", "expired", "session", "logged in", "login"} {
-		if strings.Contains(hay, kw) {
+	n := strings.ToLower(name)
+	for _, authName := range authErrorNames {
+		if strings.Contains(n, authName) {
 			return true
 		}
 	}
-	return false
+	return strings.Contains(strings.ToLower(message), "no authorization information found")
 }
 
 // quoteList renders ids as a SOQL value list: 'a','b'. Every id is charset

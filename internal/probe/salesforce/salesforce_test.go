@@ -197,6 +197,54 @@ func TestProbeMissingRecordUnchecked(t *testing.T) {
 	}
 }
 
+// A 15-char record id matches the record `sf` returns, even though SOQL always
+// echoes the 18-char canonical Id. This is the classic-URL / old-UI-paste path.
+func TestProbe15CharIDMatches18CharReturn(t *testing.T) {
+	// The link carries the 15-char id; the envelope returns the 18-char form.
+	env := `{"status":0,"result":{"records":[
+		{"attributes":{"type":"Account"},"Id":"001XX000003DHPhYAO","LastModifiedDate":"2026-07-20T09:00:00.000+0000"}
+	]}}`
+	c := New(WithRunner(func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		return []byte(env), nil
+	}))
+	ls := []links.Link{{System: links.SystemSalesforce, Record: "001XX000003DHPh"}} // 15 chars
+
+	out, _ := c.Probe(context.Background(), ls, sources.Watermark{})
+	r := out["salesforce:001XX000003DHPh"]
+	if r.Unchecked || r.LastActivity == nil {
+		t.Errorf("result = %+v, want a last activity time for a 15-char id matching the 18-char return", r)
+	}
+}
+
+// A query error whose message happens to contain auth-adjacent words (session,
+// login, expired) is still classified ReasonError, not ReasonAuth. The reason
+// label has to stay trustworthy.
+func TestProbeQueryErrorNotMisreadAsAuth(t *testing.T) {
+	errEnv := `{"status":1,"name":"InvalidQuery","message":"No such column 'Session_Id__c' on entity; did the login field expire?"}`
+	c := New(WithRunner(func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		return []byte(errEnv), nil
+	}))
+	ls := []links.Link{{System: links.SystemSalesforce, Record: "001XX000003DHPhYAO"}}
+	out, _ := c.Probe(context.Background(), ls, sources.Watermark{})
+	if r := out["salesforce:001XX000003DHPhYAO"]; !r.Unchecked || r.Reason != probe.ReasonError {
+		t.Errorf("result = %+v, want unchecked ReasonError for a query error, not ReasonAuth", r)
+	}
+}
+
+// A name-only auth error (NoOrgFound with no message) is classified ReasonAuth,
+// since the CLI error name has no space to match a substring like "no org".
+func TestProbeNameOnlyAuthFailure(t *testing.T) {
+	authEnv := `{"status":1,"name":"NoOrgFound","message":""}`
+	c := New(WithRunner(func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		return []byte(authEnv), nil
+	}))
+	ls := []links.Link{{System: links.SystemSalesforce, Record: "001XX000003DHPhYAO"}}
+	out, _ := c.Probe(context.Background(), ls, sources.Watermark{})
+	if r := out["salesforce:001XX000003DHPhYAO"]; !r.Unchecked || r.Reason != probe.ReasonAuth {
+		t.Errorf("result = %+v, want unchecked ReasonAuth for a name-only NoOrgFound", r)
+	}
+}
+
 // A bare id with a mapped prefix and no URL hint resolves its object from the
 // prefix map, here 001 -> Account.
 func TestProbeObjectFromPrefix(t *testing.T) {

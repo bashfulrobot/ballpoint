@@ -64,9 +64,21 @@ func TestParseSalesforceClassic(t *testing.T) {
 	}
 }
 
+func TestParseSalesforceClassicTrailingPath(t *testing.T) {
+	rec, _ := parseSalesforce("https://na1.salesforce.com/006XX000004Ci1w/e")
+	if rec != "006XX000004Ci1w" {
+		t.Errorf("record = %q, want the id from the first path segment", rec)
+	}
+}
+
 func TestParseSalesforceUnparseable(t *testing.T) {
 	if rec, _ := parseSalesforce("https://myorg.lightning.force.com/lightning/o/Account/list"); rec != "" {
 		t.Errorf("record = %q, want empty for a non-record salesforce url", rec)
+	}
+	// A 15-to-18 char run buried past the first path segment must not be minted
+	// as a record, or the anchor is not doing its job.
+	if rec, _ := parseSalesforce("https://na1.salesforce.com/setup/frontdoor001XX000003DHPh"); rec != "" {
+		t.Errorf("record = %q, want empty for an id-like run past the path root", rec)
 	}
 }
 

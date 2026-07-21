@@ -12,7 +12,12 @@ var (
 	driveFile    = regexp.MustCompile(`/d/([A-Za-z0-9_-]+)`)
 	ahaKey       = regexp.MustCompile(`[A-Z]{3,5}-I-[0-9]+`)
 	sfLightning  = regexp.MustCompile(`/lightning/r/([A-Za-z][A-Za-z0-9_]*)/([0-9A-Za-z]{15,18})`)
-	sfRecordID   = regexp.MustCompile(`/([0-9A-Za-z]{15,18})(?:[/?#]|$)`)
+	// sfRecordID anchors the id to the first path segment after the host, the
+	// shape of a classic record URL (instance.salesforce.com/<Id>). Anchoring
+	// keeps it from latching onto a 15-to-18 char run buried elsewhere in the
+	// URL (a frontdoor token, a session parameter), which would mint a bogus
+	// record and cost a wasted query.
+	sfRecordID = regexp.MustCompile(`^https?://[^/]+/([0-9A-Za-z]{15,18})(?:[/?#]|$)`)
 )
 
 // slackTS turns Slack's p-form (p1699999999000100) into a ts

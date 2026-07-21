@@ -119,6 +119,18 @@ func TestExtractSalesforceBareCaseID(t *testing.T) {
 	}
 }
 
+// The broadened bare-id regex matches only 15 or 18 char ids on a known prefix.
+// A 40-char git SHA (even one starting 001) and a 12-char short SHA must not be
+// harvested as Salesforce ids; the word boundaries bound the match length.
+func TestExtractSalesforceBareIDBoundaries(t *testing.T) {
+	task := sources.Task{ID: "sf3", Title: "sha 001abc0011223344556677889900112233445566 short 001abc001122"}
+	for _, l := range Extract(task) {
+		if l.System == SystemSalesforce {
+			t.Errorf("harvested a bare salesforce id from a SHA-like token: %q", l.Record)
+		}
+	}
+}
+
 // A jira bare key and an aha idea key are distinguished: aha keys carry -I- and
 // must not be miscategorised as jira.
 func TestExtractAhaNotJira(t *testing.T) {
