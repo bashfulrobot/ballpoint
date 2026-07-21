@@ -105,6 +105,57 @@ func TestRunUnknownCommand(t *testing.T) {
 	}
 }
 
+// parseProbeFlags parses the probe subcommand's own flags, so the systemd unit
+// can pass a secrets path and a concurrency bound.
+func TestParseProbeFlags(t *testing.T) {
+	var stderr bytes.Buffer
+	f, helped, err := parseProbeFlags([]string{"--dry-run", "--secrets-path", "/tmp/s.json", "--concurrency", "4"}, &stderr)
+	if err != nil {
+		t.Fatalf("parseProbeFlags error = %v", err)
+	}
+	if helped {
+		t.Fatal("parseProbeFlags reported help for a normal parse")
+	}
+	if !f.dryRun || f.secretsPath != "/tmp/s.json" || f.concurrency != 4 {
+		t.Errorf("flags = %+v, want dryRun, /tmp/s.json, 4", f)
+	}
+}
+
+// The defaults leave the secrets path empty (the binary default applies) and
+// concurrency zero (the Todoist client default of 12 applies).
+func TestParseProbeFlagsDefaults(t *testing.T) {
+	var stderr bytes.Buffer
+	f, _, err := parseProbeFlags(nil, &stderr)
+	if err != nil {
+		t.Fatalf("parseProbeFlags error = %v", err)
+	}
+	if f.secretsPath != "" || f.concurrency != 0 {
+		t.Errorf("defaults = %+v, want empty path and 0 concurrency", f)
+	}
+}
+
+func TestParseProbeFlagsRejectsPositional(t *testing.T) {
+	var stderr bytes.Buffer
+	if _, _, err := parseProbeFlags([]string{"extra"}, &stderr); err == nil {
+		t.Error("parseProbeFlags accepted a positional argument, want an error")
+	}
+}
+
+// An empty --secrets-path resolves to the off-store default; a set path is used
+// verbatim.
+func TestSecretsPathOrDefault(t *testing.T) {
+	if got, _ := secretsPathOrDefault("/x/y.json"); got != "/x/y.json" {
+		t.Errorf("secretsPathOrDefault(set) = %q, want the given path", got)
+	}
+	got, err := secretsPathOrDefault("")
+	if err != nil {
+		t.Fatalf("secretsPathOrDefault(empty) error = %v", err)
+	}
+	if got == "" || !strings.HasSuffix(got, "nixos-secrets/secrets.json") {
+		t.Errorf("secretsPathOrDefault(empty) = %q, want the off-store default", got)
+	}
+}
+
 // probe --dry-run extracts and groups links from tasks and reports planned
 // per-system call counts without touching the network or writing a watermark,
 // so it runs green with no credentials. It exercises runProbe with an injected

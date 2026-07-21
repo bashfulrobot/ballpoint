@@ -50,32 +50,113 @@
           });
 
           # `nix flake check` does not evaluate homeManagerModules, so an eval
-          # error there would ship green and land on issue #4, which is the
-          # issue that has to extend the module. Evaluating it here forces
-          # both the option surface and the lazy package default.
+          # error there would ship green. Evaluating it here forces the option
+          # surface, the lazy package default, and the prewarm timer/service
+          # units, and asserts the unit settings the issue calls for.
           hm-module =
             let
-              evaluated = pkgs.lib.evalModules {
+              # Stub the home-manager options this module sets, so the check
+              # needs no home-manager input. systemd.user.* is freeform here; the
+              # assertions below read back the exact values the module produced.
+              stubs = {
+                options.home.packages = pkgs.lib.mkOption {
+                  type = pkgs.lib.types.listOf pkgs.lib.types.package;
+                  default = [ ];
+                };
+                options.systemd.user.services = pkgs.lib.mkOption {
+                  type = pkgs.lib.types.attrsOf pkgs.lib.types.anything;
+                  default = { };
+                };
+                options.systemd.user.timers = pkgs.lib.mkOption {
+                  type = pkgs.lib.types.attrsOf pkgs.lib.types.anything;
+                  default = { };
+                };
+              };
+
+              module = import ./nix/hm-module.nix { inherit self; };
+
+              base = pkgs.lib.evalModules {
+                specialArgs = { inherit pkgs; };
+                modules = [ stubs module { programs.ballpoint.enable = true; } ];
+              };
+
+              withTimer = pkgs.lib.evalModules {
                 specialArgs = { inherit pkgs; };
                 modules = [
-                  # Stands in for the home-manager option this module sets,
-                  # so the check needs no home-manager input.
+                  stubs
+                  module
                   {
-                    options.home.packages = pkgs.lib.mkOption {
-                      type = pkgs.lib.types.listOf pkgs.lib.types.package;
-                      default = [ ];
-                    };
+                    programs.ballpoint.enable = true;
+                    programs.ballpoint.prewarm.enable = true;
+                    programs.ballpoint.prewarm.onCalendar = "Mon 09:00";
+                    programs.ballpoint.prewarm.concurrency = 6;
+                    programs.ballpoint.prewarm.secretsPath = "/tmp/x.json";
+                    programs.ballpoint.prewarm.startLimitBurst = 3;
+                    programs.ballpoint.prewarm.startLimitIntervalSec = "30min";
                   }
-                  (import ./nix/hm-module.nix { inherit self; })
-                  { programs.ballpoint.enable = true; }
                 ];
               };
 
-              installed = pkgs.lib.head evaluated.config.home.packages;
+              installed = pkgs.lib.head base.config.home.packages;
+              service = withTimer.config.systemd.user.services.ballpoint-probe;
+              timer = withTimer.config.systemd.user.timers.ballpoint-probe;
+              b2s = pkgs.lib.boolToString;
+
+              # A newline in a str unit option would inject a second INI
+              # directive, so the module must reject it at eval time.
+              newlineRejected = builtins.tryEval (
+                (pkgs.lib.evalModules {
+                  specialArgs = { inherit pkgs; };
+                  modules = [
+                    stubs
+                    module
+                    {
+                      programs.ballpoint.enable = true;
+                      programs.ballpoint.prewarm.enable = true;
+                      programs.ballpoint.prewarm.restartSec = "30s\nExecStartPre=/run/evil";
+                    }
+                  ];
+                }).config.systemd.user.services.ballpoint-probe.Service.RestartSec
+              );
+              # systemd ExecStart quoting: both flags rendered, concurrency before
+              # secrets-path, each argument double-quoted.
+              wantExec = ''"probe" "--concurrency" "6" "--secrets-path" "/tmp/x.json"'';
             in
             pkgs.runCommand "check-hm-module" { } ''
               test "${installed}" = "${self.packages.${system}.default}"
               test -x "${installed}/bin/ballpoint"
+
+              # Prewarm disabled: no timer, so enabling ballpoint alone is inert.
+              test "${b2s (base.config.systemd.user.timers ? ballpoint-probe)}" = "false"
+
+              # Service: oneshot, retrying, and never bound to a graphical session
+              # (it carries no Install section at all, so the timer alone starts it).
+              test "${service.Service.Type}" = "oneshot"
+              test "${service.Service.Restart}" = "on-failure"
+              test "${b2s (service ? Install)}" = "false"
+
+              # ExecStart carries both flags in order, quoted the systemd way.
+              actual=${pkgs.lib.escapeShellArg service.Service.ExecStart}
+              expected=${pkgs.lib.escapeShellArg wantExec}
+              case "$actual" in
+                *"$expected") : ;;
+                *) echo "unexpected ExecStart: $actual" >&2; exit 1 ;;
+              esac
+
+              # The on-failure restart is bounded, so a permanent failure stops looping.
+              test "${toString service.Unit.StartLimitBurst}" = "3"
+              test "${service.Unit.StartLimitIntervalSec}" = "30min"
+
+              # A newline in a str unit option is rejected at eval time.
+              test "${b2s newlineRejected.success}" = "false"
+
+              # Timer: calendar plus boot, catches up missed runs, wanted by timers.target.
+              test "${timer.Timer.OnCalendar}" = "Mon 09:00"
+              test "${b2s timer.Timer.Persistent}" = "true"
+              test -n "${timer.Timer.OnStartupSec}"
+              test -n "${timer.Timer.RandomizedDelaySec}"
+              test "${pkgs.lib.concatStringsSep "," timer.Install.WantedBy}" = "timers.target"
+
               touch $out
             '';
         };

@@ -72,6 +72,25 @@ func TestLoadNeverLeaksValue(t *testing.T) {
 	}
 }
 
+// A malformed secrets file is rejected without echoing its bytes. encoding/json
+// names the first offending byte in its message, which would put one byte of an
+// arbitrary readable file into the journal, so the error must report the byte
+// offset, never the content.
+func TestLoadMalformedNeverLeaksContent(t *testing.T) {
+	path := writeSecrets(t, "ZZSENSITIVE not json at all")
+
+	_, err := Load(path, "todoist_token")
+	if err == nil {
+		t.Fatal("Load() error = nil, want a malformed-JSON error")
+	}
+	if strings.ContainsAny(err.Error(), "Z") || strings.Contains(err.Error(), "SENSITIVE") {
+		t.Errorf("Load() error leaked file content: %q", err)
+	}
+	if !strings.Contains(err.Error(), "not valid JSON") {
+		t.Errorf("Load() error = %q, want it to name the file as invalid JSON", err)
+	}
+}
+
 // A token with a control character is rejected at load, so it never reaches an
 // HTTP header, and the value does not appear in the error.
 func TestLoadRejectsControlCharacter(t *testing.T) {
