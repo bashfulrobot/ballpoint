@@ -18,14 +18,21 @@ var ErrNotImplemented = errors.New("not implemented")
 const usage = `ballpoint drives Todoist triage.
 
 Usage:
-  ballpoint                              walk the triage queue
+  ballpoint [--project P | --filter Q | --preset P | --task ID] [--refresh]
+                                         walk the triage queue (bare, with no scope flag, opens a picker)
   ballpoint probe [--dry-run] [--benchmark] [--secrets-path PATH] [--concurrency N]
                                          refresh freshness data
   ballpoint dispatch                     run queued work
 
 Flags:
-  --version   print the build version and exit
-  --help      print this message and exit
+  --project P      walk one project
+  --filter Q       walk a filter query, matched against the cache
+  --preset P       walk a named preset
+  --task ID        walk a single task
+  --scripts-dir D  override the triage macro scripts directory
+  --refresh        run probe before walking to refresh the cache
+  --version        print the build version and exit
+  --help           print this message and exit
 `
 
 // displayName labels a verb in error messages. The bare walk has no verb, so
@@ -82,6 +89,17 @@ func Run(args []string, stdout, stderr io.Writer) error {
 
 	showVersion := fs.Bool("version", false, "print the build version and exit")
 
+	// The walk is the default command, so its scope flags live on the top-level
+	// FlagSet. That lets `ballpoint --project Kong` reach the walk without a verb
+	// token; a bare `ballpoint` with no scope flag opens the picker.
+	var wf walkFlags
+	fs.StringVar(&wf.project, "project", "", "walk one project")
+	fs.StringVar(&wf.filter, "filter", "", "walk a filter query, matched against the cache")
+	fs.StringVar(&wf.preset, "preset", "", "walk a named preset")
+	fs.StringVar(&wf.task, "task", "", "walk a single task id")
+	fs.StringVar(&wf.scriptsDir, "scripts-dir", "", "override the triage macro scripts directory")
+	fs.BoolVar(&wf.refresh, "refresh", false, "run probe before walking to refresh the cache")
+
 	if err := fs.Parse(args); err != nil {
 		// fs.Usage has already written the usage text for --help, and asking
 		// for help is not a failure.
@@ -121,7 +139,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("%s takes no arguments, got %q", displayName(cmd), rest[1:])
 		}
 
-		return fmt.Errorf("triage walk: %w", ErrNotImplemented)
+		return runWalk(wf, stdout, stderr)
 	case "probe":
 		f, helped, err := parseProbeFlags(rest[1:], stderr)
 		if err != nil {

@@ -20,7 +20,6 @@ func TestRunNotImplemented(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "bare invocation is the triage walk", args: []string{}},
 		{name: "dispatch", args: []string{"dispatch"}},
 	}
 
@@ -34,6 +33,25 @@ func TestRunNotImplemented(t *testing.T) {
 				t.Errorf("Run(%q) error = %v, want ErrNotImplemented", tt.args, err)
 			}
 		})
+	}
+}
+
+// The bare command now launches the triage walk. It needs a terminal, and the
+// tests capture stdout into a buffer (never a TTY), so a bare invocation must
+// fail with a real error rather than ErrNotImplemented or a hang.
+func TestRunBareWalkNeedsTerminal(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	err := Run([]string{}, &stdout, &stderr)
+
+	if err == nil {
+		t.Fatal("bare walk without a terminal returned nil, want an error")
+	}
+	if errors.Is(err, ErrNotImplemented) {
+		t.Errorf("bare walk reported ErrNotImplemented, want a terminal error; got %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("bare walk wrote %q to stdout, want nothing", stdout.String())
 	}
 }
 

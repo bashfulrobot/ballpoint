@@ -1,11 +1,18 @@
 ballpoint drives Todoist triage.
 
 Usage:
-  ballpoint                              walk the triage queue
+  ballpoint [--project P | --filter Q | --preset P | --task ID] [--refresh]
+                                         walk the triage queue (bare, with no scope flag, opens a picker)
   ballpoint probe [--dry-run] [--benchmark] [--secrets-path PATH] [--concurrency N]
                                          refresh freshness data
   ballpoint dispatch                     run queued work
 
 Flags:
-  --version   print the build version and exit
-  --help      print this message and exit
+  --project P      walk one project
+  --filter Q       walk a filter query, matched against the cache
+  --preset P       walk a named preset
+  --task ID        walk a single task
+  --scripts-dir D  override the triage macro scripts directory
+  --refresh        run probe before walking to refresh the cache
+  --version        print the build version and exit
+  --help           print this message and exit
