@@ -50,9 +50,27 @@ func WithConcurrency(n int) Option {
 // WithHTTPClient overrides the underlying http.Client.
 func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.http = h } }
 
-// New builds a Client. Concurrency defaults to 12 and the rate limiter to 50
-// requests per second, Todoist's documented ceiling, so a large scope cannot
-// burst past it.
+// WithRateLimit sets the client-side request ceiling in requests per second
+// with the given burst. A non-positive perSecond disables limiting, which the
+// benchmark uses to measure concurrency alone.
+func WithRateLimit(perSecond float64, burst int) Option {
+	return func(c *Client) {
+		if perSecond <= 0 {
+			c.limiter = rate.NewLimiter(rate.Inf, 0)
+			return
+		}
+		if burst < 1 {
+			burst = 1
+		}
+		c.limiter = rate.NewLimiter(rate.Limit(perSecond), burst)
+	}
+}
+
+// New builds a Client. Concurrency defaults to 12. A client-side rate limiter
+// (default 20 requests per second, burst 20) is a second guard so a large
+// scope cannot burst without bound. The exact Todoist ceiling is not pinned
+// here; callers tune it with WithRateLimit, and the live run in issue #3 is
+// where the real limit gets confirmed.
 func New(token string, opts ...Option) *Client {
 	c := &Client{
 		baseURL:   defaultBaseURL,
@@ -60,7 +78,7 @@ func New(token string, opts ...Option) *Client {
 		userAgent: "ballpoint/dev (+https://github.com/bashfulrobot/ballpoint)",
 		http:      &http.Client{Timeout: 30 * time.Second},
 		limit:     12,
-		limiter:   rate.NewLimiter(rate.Limit(50), 50),
+		limiter:   rate.NewLimiter(rate.Limit(20), 20),
 	}
 	for _, opt := range opts {
 		opt(c)
