@@ -1,6 +1,7 @@
 package todoist
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/bashfulrobot/ballpoint/internal/sources"
@@ -48,9 +49,11 @@ type rawNamed struct {
 	Name string `json:"name"`
 }
 
-// parseTime parses an RFC3339 timestamp, returning the zero time on empty or
-// malformed input rather than an error, so one odd field never fails a fetch.
-func parseTime(s string) time.Time {
+// parseTimeLenient parses an RFC3339 timestamp for a non-critical field,
+// returning the zero time on empty or malformed input. Used for a comment's
+// posted_at, where one odd value should not fail the fetch and nothing keys a
+// watermark off it.
+func parseTimeLenient(s string) time.Time {
 	if s == "" {
 		return time.Time{}
 	}
@@ -61,11 +64,41 @@ func parseTime(s string) time.Time {
 	return t
 }
 
+// watermarkTime resolves a task's activity time: updated_at when present,
+// otherwise added_at. A field that is present but does not parse is an error
+// rather than a silent zero, because a zero watermark disables change
+// detection permanently. If Todoist ever drifts its timestamp format the probe
+// then fails loudly instead of going quiet. A task carrying neither field is
+// not an error; it yields the zero time and always reads as changed.
+func watermarkTime(updatedAt, addedAt string) (time.Time, error) {
+	if updatedAt != "" {
+		t, err := time.Parse(time.RFC3339, updatedAt)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("parsing updated_at %q: %w", updatedAt, err)
+		}
+		return t, nil
+	}
+	if addedAt != "" {
+		t, err := time.Parse(time.RFC3339, addedAt)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("parsing added_at %q: %w", addedAt, err)
+		}
+		return t, nil
+	}
+	return time.Time{}, nil
+}
+
 // toTask converts a raw task into the normalised shape, resolving project and
 // section ids to names and mapping the inverted priority. An unknown id
-// resolves to the raw id so a card is never mislabelled as having none. The
-// watermark time is updated_at, falling back to added_at.
-func (r rawTask) toTask(projects, sections map[string]string) sources.Task {
+// resolves to the raw id so a card is never mislabelled as having none. It
+// returns an error when a present timestamp fails to parse, so a format drift
+// surfaces rather than silently zeroing the watermark.
+//
+// The Title, Description, and Labels are user-authored text carried through
+// unchanged. In a shared project a collaborator controls them, so any later
+// consumer that renders this into a model prompt (the triage TUI in #5) must
+// treat it as untrusted and fence it there.
+func (r rawTask) toTask(projects, sections map[string]string) (sources.Task, error) {
 	project := r.ProjectID
 	if name, ok := projects[r.ProjectID]; ok {
 		project = name
@@ -79,9 +112,9 @@ func (r rawTask) toTask(projects, sections map[string]string) sources.Task {
 		}
 	}
 
-	updated := parseTime(r.UpdatedAt)
-	if updated.IsZero() {
-		updated = parseTime(r.AddedAt)
+	updated, err := watermarkTime(r.UpdatedAt, r.AddedAt)
+	if err != nil {
+		return sources.Task{}, fmt.Errorf("task %s: %w", r.ID, err)
 	}
 
 	due, recurring := "", false
@@ -105,7 +138,7 @@ func (r rawTask) toTask(projects, sections map[string]string) sources.Task {
 		Description: r.Desc,
 		URL:         r.URL,
 		UpdatedAt:   updated,
-	}
+	}, nil
 }
 
 // toComment converts a raw comment into the normalised shape.
@@ -117,7 +150,7 @@ func (r rawComment) toComment() sources.Comment {
 	return sources.Comment{
 		ID:         r.ID,
 		Content:    r.Content,
-		PostedAt:   parseTime(r.PostedAt),
+		PostedAt:   parseTimeLenient(r.PostedAt),
 		Attachment: attachment,
 	}
 }

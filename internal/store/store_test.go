@@ -1,6 +1,8 @@
 package store
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -95,5 +97,54 @@ func TestLoadTaskMissing(t *testing.T) {
 	}
 	if ok {
 		t.Error("LoadTask() ok = true for a missing task, want false")
+	}
+}
+
+// A task ID from the API that is not a safe filename must be rejected before it
+// reaches a path, so a spoofed or drifted ID cannot write outside the cache.
+func TestUnsafeTaskIDRejected(t *testing.T) {
+	root := t.TempDir()
+	s, err := Open(root)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	unsafe := []string{"../escape", "sub/dir", `back\slash`, ".", "..", ".hidden", ""}
+	for _, id := range unsafe {
+		t.Run(id, func(t *testing.T) {
+			if err := s.SaveTask(sources.Task{ID: id, Title: "x"}); err == nil {
+				t.Errorf("SaveTask(id=%q) error = nil, want a rejection", id)
+			}
+			if _, _, err := s.LoadTask(id); err == nil {
+				t.Errorf("LoadTask(id=%q) error = nil, want a rejection", id)
+			}
+		})
+	}
+
+	// A traversal attempt must not have written anything above the cache dir.
+	if _, err := os.Stat(filepath.Join(root, "escape.json")); !os.IsNotExist(err) {
+		t.Errorf("a traversal id wrote outside the cache directory: stat err = %v", err)
+	}
+}
+
+// A corrupt watermark file is a rebuildable cache, so it loads as empty and
+// warns rather than wedging every future run behind a manual delete.
+func TestLoadWatermarkCorruptRecovers(t *testing.T) {
+	root := t.TempDir()
+	s, err := Open(root)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "watermarks.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("writing corrupt watermark: %v", err)
+	}
+
+	got, err := s.LoadWatermark()
+	if err != nil {
+		t.Fatalf("LoadWatermark() error = %v, want nil (recover to empty)", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("LoadWatermark() = %v, want empty after corruption", got)
 	}
 }

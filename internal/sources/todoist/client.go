@@ -6,14 +6,29 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"golang.org/x/time/rate"
 )
 
 const defaultBaseURL = "https://api.todoist.com/api/v1"
+
+// maxPages caps how many pages getAll will drain from one endpoint. At the 200
+// item page size that is 200k items, far beyond any real Todoist scope, so it
+// only trips on a server (buggy or hostile) that never stops handing back a
+// cursor. Without it that loop and its accumulator grow without bound.
+const maxPages = 1000
+
+// maxRetries bounds the 429 backoff loop in get.
+const maxRetries = 3
+
+// maxRetryWait caps how long a single Retry-After pause may last, so a hostile
+// server cannot park the process for an arbitrary time.
+const maxRetryWait = 60 * time.Second
 
 // Client talks to the Todoist v1 API. Construct it with New.
 type Client struct {
@@ -99,11 +114,19 @@ type page struct {
 // a slice, following next_cursor until it is empty. query holds any endpoint
 // specific parameters; cursor and limit are added here.
 func (c *Client) getAll(ctx context.Context, path string, query url.Values, out any) error {
-	// Accumulate the raw result arrays, then unmarshal once into out.
+	// Accumulate the raw result arrays, then unmarshal once into out. The extra
+	// marshal/unmarshal round trip below trades one full re-serialisation of
+	// the result set for keeping the page envelope decoupled from the typed
+	// target. Fine at Todoist's task counts; revisit if a scope reaches the
+	// thousands.
 	var buf []json.RawMessage
 
 	cursor := ""
-	for {
+	for pageNum := 0; ; pageNum++ {
+		if pageNum >= maxPages {
+			return fmt.Errorf("%s exceeded %d pages, aborting", path, maxPages)
+		}
+
 		if err := c.limiter.Wait(ctx); err != nil {
 			return err
 		}
@@ -133,6 +156,11 @@ func (c *Client) getAll(ctx context.Context, path string, query url.Values, out 
 		if p.NextCursor == "" {
 			break
 		}
+		// A server that echoes the same cursor would otherwise spin forever
+		// under the page cap; stop as soon as it fails to advance.
+		if p.NextCursor == cursor {
+			return fmt.Errorf("%s returned a non-advancing cursor, aborting", path)
+		}
 		cursor = p.NextCursor
 	}
 
@@ -146,36 +174,86 @@ func (c *Client) getAll(ctx context.Context, path string, query url.Values, out 
 	return nil
 }
 
-// get performs one GET and decodes the JSON body into out.
+// get performs one GET and decodes the JSON body into out. It retries a 429 up
+// to maxRetries times, honouring Retry-After, so a brief rate-limit trip does
+// not fail the whole probe.
 func (c *Client) get(ctx context.Context, path string, query url.Values, out any) error {
 	u := c.baseURL + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return fmt.Errorf("building request for %s: %w", path, err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("User-Agent", c.userAgent)
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return fmt.Errorf("building request for %s: %w", path, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		req.Header.Set("User-Agent", c.userAgent)
 
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("requesting %s: %w", path, err)
-	}
-	// The body is drained by the JSON decoder below; a close error on a
-	// fully read response carries no signal the caller can act on.
-	defer func() { _ = resp.Body.Close() }()
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return fmt.Errorf("requesting %s: %w", path, err)
+		}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// The token is in a header, never the URL, so naming the endpoint and
-		// status leaks nothing.
-		return fmt.Errorf("todoist %s returned %s", path, resp.Status)
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRetries {
+			wait := retryAfter(resp, attempt)
+			// Drain and close before sleeping so the connection returns to the
+			// pool for the retry.
+			drainClose(resp)
+
+			select {
+			case <-time.After(wait):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		// From here the response is terminal for this call, so make sure the
+		// body is drained to EOF and closed. net/http only reuses a connection
+		// whose body was fully read, which matters for a probe firing dozens of
+		// requests at one host.
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			drainClose(resp)
+			// The token is in a header, never the URL, so naming the endpoint
+			// and status leaks nothing.
+			return fmt.Errorf("todoist %s returned %s", path, resp.Status)
+		}
+
+		decodeErr := json.NewDecoder(resp.Body).Decode(out)
+		drainClose(resp)
+		if decodeErr != nil {
+			return fmt.Errorf("decoding %s response: %w", path, decodeErr)
+		}
+		return nil
+	}
+}
+
+// drainClose reads any remaining body and closes it, so the connection can be
+// reused. Errors carry no signal a caller can act on.
+func drainClose(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+}
+
+// retryAfter picks a backoff for a 429. It prefers the server's Retry-After
+// header (integer seconds), falling back to a linear backoff, and caps the
+// result so a hostile header cannot park the process.
+func retryAfter(resp *http.Response, attempt int) time.Duration {
+	if v := resp.Header.Get("Retry-After"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
+			wait := time.Duration(secs) * time.Second
+			if wait > maxRetryWait {
+				return maxRetryWait
+			}
+			return wait
+		}
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decoding %s response: %w", path, err)
+	wait := time.Duration(attempt+1) * time.Second
+	if wait > maxRetryWait {
+		return maxRetryWait
 	}
-	return nil
+	return wait
 }

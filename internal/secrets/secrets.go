@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // DefaultPath returns the standard off-store secrets file,
@@ -51,6 +52,14 @@ func Load(path, key string) (string, error) {
 
 	if value == "" {
 		return "", fmt.Errorf("key %q in %s is empty", key, path)
+	}
+
+	// A token carrying a control character (a stray newline in the secrets
+	// file, say) would later be concatenated into an HTTP header. Reject it at
+	// the source with a clear message rather than letting a request fail
+	// opaquely downstream. The value is never printed.
+	if i := strings.IndexFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f }); i >= 0 {
+		return "", fmt.Errorf("key %q in %s contains a control character", key, path)
 	}
 
 	return value, nil

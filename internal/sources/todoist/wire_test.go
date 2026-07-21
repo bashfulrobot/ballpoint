@@ -23,7 +23,10 @@ func TestRawTaskConvert(t *testing.T) {
 	projects := map[string]string{"p100": "Inbox"}
 	sections := map[string]string{"s5": "Doing"}
 
-	task := raw.toTask(projects, sections)
+	task, err := raw.toTask(projects, sections)
+	if err != nil {
+		t.Fatalf("toTask() error = %v", err)
+	}
 
 	if task.Priority != "p1" {
 		t.Errorf("priority = %q, want p1", task.Priority)
@@ -51,7 +54,10 @@ func TestRawTaskConvert(t *testing.T) {
 func TestRawTaskWatermarkFallback(t *testing.T) {
 	raw := rawTask{ID: "11", Content: "x", Priority: 1, AddedAt: "2026-07-18T12:00:00Z"}
 
-	task := raw.toTask(nil, nil)
+	task, err := raw.toTask(nil, nil)
+	if err != nil {
+		t.Fatalf("toTask() error = %v", err)
+	}
 
 	want := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	if !task.UpdatedAt.Equal(want) {
@@ -64,9 +70,38 @@ func TestRawTaskWatermarkFallback(t *testing.T) {
 func TestRawTaskUnknownProject(t *testing.T) {
 	raw := rawTask{ID: "12", Content: "x", Priority: 1, ProjectID: "ghost", AddedAt: "2026-07-18T12:00:00Z"}
 
-	task := raw.toTask(map[string]string{}, nil)
+	task, err := raw.toTask(map[string]string{}, nil)
+	if err != nil {
+		t.Fatalf("toTask() error = %v", err)
+	}
 
 	if task.Project != "ghost" {
 		t.Errorf("project = %q, want the raw id ghost", task.Project)
+	}
+}
+
+// A present but unparseable updated_at is an error, not a silent zero, so a
+// timestamp format drift fails loudly instead of quietly disabling change
+// detection.
+func TestRawTaskMalformedTimestamp(t *testing.T) {
+	raw := rawTask{ID: "13", Content: "x", Priority: 1, UpdatedAt: "not-a-timestamp"}
+
+	_, err := raw.toTask(nil, nil)
+	if err == nil {
+		t.Fatal("toTask() error = nil, want a parse error for a malformed updated_at")
+	}
+}
+
+// A task with no timestamps at all is not an error; it yields the zero time and
+// always reads as changed.
+func TestRawTaskNoTimestamps(t *testing.T) {
+	raw := rawTask{ID: "14", Content: "x", Priority: 1}
+
+	task, err := raw.toTask(nil, nil)
+	if err != nil {
+		t.Fatalf("toTask() error = %v", err)
+	}
+	if !task.UpdatedAt.IsZero() {
+		t.Errorf("updatedAt = %v, want zero", task.UpdatedAt)
 	}
 }

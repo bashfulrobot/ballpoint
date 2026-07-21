@@ -125,6 +125,51 @@ func TestProbeFetchesCommentsConcurrently(t *testing.T) {
 	}
 }
 
+// A failing comment fetch must not sink the whole probe. The task is still
+// returned, cached without its comments, and Probe reports no error.
+func TestProbeToleratesCommentFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/tasks":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{
+					{"id": "1", "content": "first", "project_id": "p1", "priority": 4,
+						"added_at": "2026-07-18T12:00:00Z", "updated_at": "2026-07-20T09:00:00Z"},
+				},
+				"next_cursor": nil,
+			})
+		case "/projects":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]string{{"id": "p1", "name": "Inbox"}}, "next_cursor": nil})
+		case "/sections":
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": []map[string]string{}, "next_cursor": nil})
+		case "/comments":
+			// Always fail the comment fetch.
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			http.Error(w, r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New("test-token", WithBaseURL(srv.URL))
+
+	delta, err := c.Probe(context.Background(), sources.Watermark{})
+	if err != nil {
+		t.Fatalf("Probe() error = %v, want nil despite the comment failure", err)
+	}
+	if len(delta.Tasks) != 1 {
+		t.Fatalf("Probe() returned %d tasks, want 1", len(delta.Tasks))
+	}
+	if delta.Tasks[0].ID != "1" {
+		t.Errorf("task ID = %q, want 1", delta.Tasks[0].ID)
+	}
+	if len(delta.Tasks[0].Comments) != 0 {
+		t.Errorf("comments = %+v, want none after the fetch failed", delta.Tasks[0].Comments)
+	}
+}
+
 // Changed holds a link key whose updated_at is after the incoming watermark;
 // an up-to-date task is absent from Changed.
 func TestProbeComputesChanged(t *testing.T) {

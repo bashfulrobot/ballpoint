@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 )
 
@@ -69,5 +70,54 @@ func TestDefaultLimit(t *testing.T) {
 	c := New("test-token")
 	if c.limit != 12 {
 		t.Errorf("default limit = %d, want 12", c.limit)
+	}
+}
+
+// A 429 with a short Retry-After is retried rather than failing the call.
+func TestGetAllRetriesOn429(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]string{{"id": "1"}}, "next_cursor": nil,
+		})
+	}))
+	defer srv.Close()
+
+	c := New("test-token", WithBaseURL(srv.URL))
+
+	var out []rawNamed
+	if err := c.getAll(context.Background(), "/projects", nil, &out); err != nil {
+		t.Fatalf("getAll() error = %v, want a successful retry", err)
+	}
+	if len(out) != 1 || out[0].ID != "1" {
+		t.Errorf("getAll() = %+v, want one item with id 1", out)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("server saw %d calls, want 2 (one 429, one success)", got)
+	}
+}
+
+// A server that never advances the cursor must abort rather than loop forever.
+func TestGetAllAbortsOnNonAdvancingCursor(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]string{{"id": "1"}}, "next_cursor": "STUCK",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("test-token", WithBaseURL(srv.URL))
+
+	var out []rawNamed
+	err := c.getAll(context.Background(), "/projects", nil, &out)
+	if err == nil {
+		t.Fatal("getAll() error = nil, want an abort on the repeating cursor")
 	}
 }

@@ -71,3 +71,17 @@ func TestLoadNeverLeaksValue(t *testing.T) {
 		t.Errorf("Load() error leaked the secret value: %q", err)
 	}
 }
+
+// A token with a control character is rejected at load, so it never reaches an
+// HTTP header, and the value does not appear in the error.
+func TestLoadRejectsControlCharacter(t *testing.T) {
+	path := writeSecrets(t, `{"todoist_token":"abc\ndef"}`)
+
+	_, err := Load(path, "todoist_token")
+	if err == nil {
+		t.Fatal("Load() error = nil, want a control-character rejection")
+	}
+	if strings.Contains(err.Error(), "abc") || strings.Contains(err.Error(), "def") {
+		t.Errorf("Load() error leaked the token value: %q", err)
+	}
+}
