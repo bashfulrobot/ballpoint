@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bashfulrobot/ballpoint/internal/fsutil"
 	"github.com/bashfulrobot/ballpoint/internal/probe"
 	"github.com/bashfulrobot/ballpoint/internal/sources"
 )
@@ -30,22 +31,11 @@ func Open(root string) (*Store, error) {
 
 func (s *Store) watermarkPath() string { return filepath.Join(s.root, "watermarks.json") }
 
-// validTaskID rejects any id that is not safe as a filename. Task IDs come off
-// the Todoist API, so a spoofed or drifted value containing a path separator or
-// a traversal sequence must not be joined into a cache path. Todoist IDs are
-// numeric today; this fails closed if that ever changes.
-func validTaskID(id string) error {
-	if id == "" {
-		return errors.New("empty task id")
-	}
-	if strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") || strings.HasPrefix(id, ".") {
-		return fmt.Errorf("task id %q is not a safe filename", id)
-	}
-	return nil
-}
-
 func (s *Store) taskPath(id string) (string, error) {
-	if err := validTaskID(id); err != nil {
+	// Task IDs come off the Todoist API, so a spoofed or drifted value with a
+	// path separator or traversal sequence must not reach a cache path. The
+	// shared guard fails closed; Todoist IDs are numeric today.
+	if err := fsutil.SafeFilename(id); err != nil {
 		return "", err
 	}
 	return filepath.Join(s.root, "cache", id+".json"), nil

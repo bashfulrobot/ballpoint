@@ -22,7 +22,8 @@ Usage:
                                          walk the triage queue (bare, with no scope flag, opens a picker)
   ballpoint probe [--dry-run] [--benchmark] [--secrets-path PATH] [--concurrency N]
                                          refresh freshness data
-  ballpoint dispatch                     run queued work
+  ballpoint dispatch [--concurrency N] [--model M] [--scripts-dir D] [--dry-run] [--status]
+                                         assess queued tasks and write work-log entries
 
 Flags:
   --project P      walk one project
@@ -156,11 +157,20 @@ func Run(args []string, stdout, stderr io.Writer) error {
 
 		return runProbe(deps, stdout, stderr)
 	case "dispatch":
-		if len(rest) > 1 {
-			return fmt.Errorf("dispatch takes no arguments, got %q", rest[1:])
+		f, helped, err := parseDispatchFlags(rest[1:], stderr)
+		if err != nil {
+			return err
+		}
+		if helped {
+			return nil
 		}
 
-		return fmt.Errorf("dispatch: %w", ErrNotImplemented)
+		deps, err := resolveDispatchDeps(f)
+		if err != nil {
+			return err
+		}
+
+		return runDispatch(deps, stdout, stderr)
 	default:
 		// A failed usage write is deliberately not allowed to mask the real
 		// error.

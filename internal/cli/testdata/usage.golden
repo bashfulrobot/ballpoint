@@ -5,7 +5,8 @@ Usage:
                                          walk the triage queue (bare, with no scope flag, opens a picker)
   ballpoint probe [--dry-run] [--benchmark] [--secrets-path PATH] [--concurrency N]
                                          refresh freshness data
-  ballpoint dispatch                     run queued work
+  ballpoint dispatch [--concurrency N] [--model M] [--scripts-dir D] [--dry-run] [--status]
+                                         assess queued tasks and write work-log entries
 
 Flags:
   --project P      walk one project
