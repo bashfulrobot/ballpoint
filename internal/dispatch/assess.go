@@ -147,6 +147,14 @@ func jsonUnmarshalStrict(s string, v any) error {
 // prompt is the whole input and cost does not balloon with repo context. No
 // tools, no prompts, no session persistence, JSON output. The prompt is fed on
 // stdin, never argv, so task content cannot land in the process table.
+//
+// The empty string passed to --tools is the documented "disable all tools"
+// value, verified against `claude --help` on the Claude Code CLI (v2.1.216):
+// `--tools <tools...>  ... Use "" to disable all tools, "default" to use all
+// tools, or specify tool names`. This is the enforcement that keeps a worker
+// from running Bash, touching files, or reaching the network, so the flag and
+// its empty value are load-bearing, not cosmetic. If a future CLI changes this
+// contract, the dispatcher's no-outward-capability guarantee changes with it.
 func claudeArgv(model string) []string {
 	return []string{
 		"-p",

@@ -8,6 +8,8 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/bashfulrobot/ballpoint/internal/sanitize"
 )
 
 // Layout constants. The header and footer are fixed height; the body viewport
@@ -148,43 +150,23 @@ func (m Model) headerView() string {
 	return fmt.Sprintf("%s %s\n%s", pos, title, line2)
 }
 
-// sanitizeTerminal drops control bytes that could carry ANSI or OSC escape
-// sequences from collaborator-controlled text, keeping tab and newline. Use it
-// for multi-line body text (fed to glamour, which does not strip control bytes
-// of its own). It neutralizes cursor manipulation, title rewriting, and OSC
-// hyperlink or clipboard tricks in text the operator did not author.
-func sanitizeTerminal(s string) string { return stripControl(s, true) }
+// sanitizeTerminal drops control bytes and dangerous Unicode that could carry
+// ANSI or OSC escape sequences, or reorder text, from collaborator-controlled
+// text, keeping tab and newline. Use it for multi-line body text (fed to
+// glamour, which does not strip control bytes of its own). It neutralizes cursor
+// manipulation, title rewriting, OSC hyperlink or clipboard tricks, and
+// Trojan-Source bidi reordering in text the operator did not author.
+func sanitizeTerminal(s string) string { return sanitize.Block(s) }
 
 // sanitizeLine is sanitizeTerminal for single-line contexts (the header fields
 // and the status line). It also collapses tab and newline to a space, so a title
 // carrying newlines cannot inject extra lines and spoof the fixed-height header.
-func sanitizeLine(s string) string { return stripControl(s, false) }
+func sanitizeLine(s string) string { return sanitize.Line(s) }
 
 // SanitizeLabel strips control bytes from a single-line label. The CLI scope
 // picker renders collaborator-controlled project names before the TUI starts, so
 // it sanitizes each label with the same policy the header uses.
-func SanitizeLabel(s string) string { return sanitizeLine(s) }
-
-// stripControl removes C0/C1 control bytes and DEL. When keepWhitespace is true
-// tab and newline pass through (body text); otherwise they collapse to a space
-// (single-line fields).
-func stripControl(s string, keepWhitespace bool) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r == '\t' || r == '\n':
-			if keepWhitespace {
-				return r
-			}
-			return ' '
-		case r < 0x20 || r == 0x7f:
-			return -1
-		case r >= 0x80 && r <= 0x9f:
-			return -1
-		default:
-			return r
-		}
-	}, s)
-}
+func SanitizeLabel(s string) string { return sanitize.Line(s) }
 
 func (m Model) footerView() string {
 	if m.help {

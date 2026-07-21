@@ -186,8 +186,8 @@ func runJob(ctx context.Context, cfg Config, g taskGroup) (outcome, bool, float6
 
 	dropped := 0
 	for _, e := range g.entries {
-		if e.Channel == "" || e.To == "" || e.Body == "" {
-			dropped++ // malformed draft, nothing to log; recorded below
+		if !validChannel(e.Channel) || e.To == "" || e.Body == "" {
+			dropped++ // malformed or unknown-channel draft; recorded below
 			continue
 		}
 		if err := cfg.RunScript(wbCtx, DraftArgv(cfg.ScriptsDir, g.ref, e)); err != nil {
@@ -227,7 +227,10 @@ func plural(n int) string {
 }
 
 // runDry prints each task's prompt and planned writes without invoking or
-// draining anything.
+// draining anything. Each prompt is bracketed with a fresh random nonce, the
+// same as a real run, so task content cannot forge the closing sentinel by
+// guessing a fixed token. The planned draft argv is built through DraftArgv, so
+// what prints is exactly what a real run would send, already sanitized.
 func runDry(cfg Config, groups []taskGroup) (Summary, error) {
 	for _, g := range groups {
 		task, ok, err := cfg.Store.LoadTask(g.id)
@@ -235,12 +238,16 @@ func runDry(cfg Config, groups []taskGroup) (Summary, error) {
 			_, _ = fmt.Fprintf(cfg.Stdout, "task %s: not in cache, would fail\n\n", g.id)
 			continue
 		}
-		prompt := BuildPrompt(task, cfg.Report.Tasks[g.id], "DRYRUN")
+		nonce, err := newNonce()
+		if err != nil {
+			return Summary{}, err
+		}
+		prompt := BuildPrompt(task, cfg.Report.Tasks[g.id], nonce)
 		_, _ = fmt.Fprintf(cfg.Stdout, "=== task %s prompt ===\n%s\n", g.id, prompt)
 		_, _ = fmt.Fprintf(cfg.Stdout, "=== task %s planned writes ===\n", g.id)
 		_, _ = fmt.Fprintf(cfg.Stdout, "worklog: %v\n", WorklogArgv(cfg.ScriptsDir, g.ref, Assessment{Summary: "<assessment>"}))
 		for _, e := range g.entries {
-			if e.Channel == "" || e.To == "" || e.Body == "" {
+			if !validChannel(e.Channel) || e.To == "" || e.Body == "" {
 				continue
 			}
 			_, _ = fmt.Fprintf(cfg.Stdout, "draft: %v\n", DraftArgv(cfg.ScriptsDir, g.ref, e))

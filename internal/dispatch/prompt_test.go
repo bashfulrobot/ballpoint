@@ -59,3 +59,20 @@ func TestBuildPromptSanitizesControlBytes(t *testing.T) {
 		t.Errorf("prompt kept control bytes:\n%q", got)
 	}
 }
+
+// Bidi overrides and zero-width characters in task content are stripped, so a
+// title cannot be visually reordered (Trojan Source) or padded with invisible
+// runs to steer the model reading the prompt.
+func TestBuildPromptSanitizesBidiAndZeroWidth(t *testing.T) {
+	task := sampleTask()
+	task.Title = "safe\u202etext\u200bhere"
+	got := BuildPrompt(task, probe.TaskReport{}, "NONCE")
+	for _, r := range []rune{0x202e, 0x200b} {
+		if strings.ContainsRune(got, r) {
+			t.Errorf("prompt kept dangerous rune %U:\n%q", r, got)
+		}
+	}
+	if !strings.Contains(got, "safetexthere") {
+		t.Errorf("prompt lost the visible title text:\n%q", got)
+	}
+}

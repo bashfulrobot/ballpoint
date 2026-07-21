@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/bashfulrobot/ballpoint/internal/probe"
+	"github.com/bashfulrobot/ballpoint/internal/sanitize"
 	"github.com/bashfulrobot/ballpoint/internal/sources"
 )
 
@@ -88,32 +89,15 @@ const promptSchema = `Output schema:
   "next": "next step, or an empty string when none"
 }`
 
-// clean strips control bytes from a single-line field and collapses tab and
-// newline to a space, so task content cannot inject lines or escape sequences
-// into the prompt (which is printed to the terminal on a dry run).
-func clean(s string) string { return stripControl(s, false) }
+// clean strips control bytes and dangerous Unicode from a single-line field and
+// collapses tab and newline to a space, so task content cannot inject lines or
+// escape sequences into the prompt (which is printed to the terminal on a dry
+// run) or reorder text with bidi overrides to steer the model.
+func clean(s string) string { return sanitize.Line(s) }
 
-// cleanBlock strips control bytes from multi-line text, keeping tab and
-// newline.
-func cleanBlock(s string) string { return stripControl(s, true) }
-
-func stripControl(s string, keepWhitespace bool) string {
-	return strings.Map(func(r rune) rune {
-		switch {
-		case r == '\t' || r == '\n':
-			if keepWhitespace {
-				return r
-			}
-			return ' '
-		case r < 0x20 || r == 0x7f:
-			return -1
-		case r >= 0x80 && r <= 0x9f:
-			return -1
-		default:
-			return r
-		}
-	}, s)
-}
+// cleanBlock strips control bytes and dangerous Unicode from multi-line text,
+// keeping tab and newline.
+func cleanBlock(s string) string { return sanitize.Block(s) }
 
 // newNonce returns a random hex token for bracketing untrusted content.
 func newNonce() (string, error) {

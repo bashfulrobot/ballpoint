@@ -1,9 +1,12 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -202,5 +205,80 @@ func TestRunDryRunTouchesNothing(t *testing.T) {
 	left, _ := queue.Load(root)
 	if len(left) != 1 {
 		t.Errorf("dry run drained the queue: %+v", left)
+	}
+}
+
+// The dry run must bracket the prompt with a fresh random nonce, not a fixed
+// token, so task content cannot forge the closing sentinel by guessing it.
+func TestRunDryRunUsesRandomNonce(t *testing.T) {
+	root := t.TempDir()
+	rec := &recorder{}
+	var out bytes.Buffer
+	cfg := baseConfig(t, root, rec, func(context.Context, string) (Assessment, float64, error) {
+		t.Fatal("dry run must not call the assessor")
+		return Assessment{}, 0, nil
+	})
+	cfg.DryRun = true
+	cfg.Stdout = &out
+	if _, err := Run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	body := out.String()
+	if strings.Contains(body, `id="DRYRUN"`) {
+		t.Errorf("dry run used the old fixed DRYRUN nonce:\n%s", body)
+	}
+	if !regexp.MustCompile(`<untrusted id="[0-9a-f]{16}">`).MatchString(body) {
+		t.Errorf("dry run prompt missing a random hex nonce:\n%s", body)
+	}
+}
+
+// A queued draft naming a channel the walk never emits (a tampered or stale
+// queue file) is dropped, not passed to td_draft.sh, and the drop is recorded.
+func TestRunDropsUnknownChannelDraft(t *testing.T) {
+	root := t.TempDir()
+	st, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveTask(sources.Task{ID: "42", Title: "t42"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.Append(root, queue.Entry{ID: "e1", TaskID: "42", TaskRef: "id:42", Channel: "webhook", To: "x", Body: "y"}); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := queue.Load(root)
+	rec := &recorder{}
+	cfg := Config{
+		Store:       st,
+		Root:        root,
+		Report:      probe.Report{Tasks: map[string]probe.TaskReport{"42": {Title: "t42"}}},
+		Entries:     entries,
+		ScriptsDir:  "/scripts",
+		Concurrency: 1,
+		Now:         func() time.Time { return time.Unix(0, 0).UTC() },
+		Assess: func(context.Context, string) (Assessment, float64, error) {
+			return Assessment{Summary: "assessed"}, 0, nil
+		},
+		RunScript: rec.run,
+		Stdout:    io.Discard,
+	}
+	sum, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Succeeded != 1 {
+		t.Errorf("summary = %+v, want 1 succeeded", sum)
+	}
+	// Only the worklog write. The unknown-channel draft is never scripted.
+	if len(rec.calls) != 1 || rec.calls[0][0] != "/scripts/td_worklog.sh" {
+		t.Fatalf("script calls = %v, want only the worklog write", rec.calls)
+	}
+	got, _ := LoadStatuses(root)
+	if len(got) != 1 || !strings.Contains(got[0].Detail, "dropped 1") {
+		t.Errorf("status = %+v, want a dropped-entry detail", got)
+	}
+	left, _ := queue.Load(root)
+	if len(left) != 0 {
+		t.Errorf("queue not drained: %+v", left)
 	}
 }
