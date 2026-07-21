@@ -132,10 +132,10 @@ func (c *Client) Probe(ctx context.Context, ls []links.Link, _ sources.Watermark
 		case rec == "":
 			out[l.Key()] = probe.Result{Unchecked: true, Reason: probe.ReasonUnparseable}
 		case sfCaseCharset.MatchString(rec):
-			// An all-digit record is a Case number. An 18-char id can never be
-			// all-digit (its checksum suffix carries letters) and all-digit
-			// 15-char ids do not occur in practice, so a numeric record here is
-			// unambiguously a Case number, not an id.
+			// An all-digit record is a Case number. A Salesforce id's body is
+			// base62, so a 15 or 18 char id that is entirely digits is
+			// astronomically unlikely; a numeric record here is treated as a
+			// Case number, not an id.
 			caseNumbers = append(caseNumbers, l)
 		case !sfIDCharset.MatchString(rec):
 			// The record reached us but is neither a clean id nor a Case number,
