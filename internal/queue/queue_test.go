@@ -5,6 +5,40 @@ import (
 	"time"
 )
 
+func TestRemoveDropsSelectedEntriesInOrder(t *testing.T) {
+	root := t.TempDir()
+	for _, id := range []string{"a", "b", "c"} {
+		if err := Append(root, Entry{ID: id, TaskID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := Remove(root, map[string]bool{"b": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("removed = %d, want 1", n)
+	}
+	got, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "c" {
+		t.Errorf("remaining = %+v, want [a c] in order", got)
+	}
+}
+
+func TestRemoveMissingFileIsNoOp(t *testing.T) {
+	root := t.TempDir()
+	n, err := Remove(root, map[string]bool{"x": true})
+	if err != nil {
+		t.Fatalf("Remove on empty queue: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("removed = %d, want 0", n)
+	}
+}
+
 func TestAppendAndLoad(t *testing.T) {
 	root := t.TempDir()
 	e1 := Entry{ID: "1-1", TaskID: "1", TaskRef: "DEVP-I-42", Channel: "slack", To: "#team", Body: "ping", QueuedAt: time.Unix(1, 0).UTC()}

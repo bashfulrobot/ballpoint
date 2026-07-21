@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/bashfulrobot/ballpoint/internal/fsutil"
 )
 
 // Entry is one queued outward action, serialised as one JSON object per line.
@@ -85,4 +87,49 @@ func Load(root string) ([]Entry, error) {
 		return nil, fmt.Errorf("reading queue: %w", err)
 	}
 	return out, nil
+}
+
+// Remove rewrites pending.jsonl without the entries whose IDs are in ids and
+// returns how many were dropped. The rewrite is atomic (temp file, fsync,
+// rename), so a crash never truncates the queue. A missing file is a no-op.
+// The dispatcher calls this only for a task whose assessment fully succeeded,
+// so a failed or requeued task keeps its entries for the next run.
+func Remove(root string, ids map[string]bool) (int, error) {
+	entries, err := Load(root)
+	if err != nil {
+		return 0, err
+	}
+	if len(entries) == 0 {
+		return 0, nil
+	}
+
+	kept := make([]Entry, 0, len(entries))
+	removed := 0
+	for _, e := range entries {
+		if ids[e.ID] {
+			removed++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+
+	if err := os.MkdirAll(dir(root), 0o700); err != nil {
+		return 0, fmt.Errorf("creating queue directory: %w", err)
+	}
+	var buf []byte
+	for _, e := range kept {
+		line, err := json.Marshal(e)
+		if err != nil {
+			return 0, fmt.Errorf("encoding queue entry: %w", err)
+		}
+		buf = append(buf, line...)
+		buf = append(buf, '\n')
+	}
+	if err := fsutil.WriteBytesAtomic(file(root), buf); err != nil {
+		return 0, fmt.Errorf("rewriting queue: %w", err)
+	}
+	return removed, nil
 }
