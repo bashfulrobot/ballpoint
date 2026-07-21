@@ -101,6 +101,23 @@
               service = withTimer.config.systemd.user.services.ballpoint-probe;
               timer = withTimer.config.systemd.user.timers.ballpoint-probe;
               b2s = pkgs.lib.boolToString;
+
+              # A newline in a str unit option would inject a second INI
+              # directive, so the module must reject it at eval time.
+              newlineRejected = builtins.tryEval (
+                (pkgs.lib.evalModules {
+                  specialArgs = { inherit pkgs; };
+                  modules = [
+                    stubs
+                    module
+                    {
+                      programs.ballpoint.enable = true;
+                      programs.ballpoint.prewarm.enable = true;
+                      programs.ballpoint.prewarm.restartSec = "30s\nExecStartPre=/run/evil";
+                    }
+                  ];
+                }).config.systemd.user.services.ballpoint-probe.Service.RestartSec
+              );
               # systemd ExecStart quoting: both flags rendered, concurrency before
               # secrets-path, each argument double-quoted.
               wantExec = ''"probe" "--concurrency" "6" "--secrets-path" "/tmp/x.json"'';
@@ -129,6 +146,9 @@
               # The on-failure restart is bounded, so a permanent failure stops looping.
               test "${toString service.Unit.StartLimitBurst}" = "3"
               test "${service.Unit.StartLimitIntervalSec}" = "30min"
+
+              # A newline in a str unit option is rejected at eval time.
+              test "${b2s newlineRejected.success}" = "false"
 
               # Timer: calendar plus boot, catches up missed runs, wanted by timers.target.
               test "${timer.Timer.OnCalendar}" = "Mon 09:00"

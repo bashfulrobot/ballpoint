@@ -9,6 +9,7 @@ package secrets
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,7 +38,14 @@ func Load(path, key string) (string, error) {
 
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return "", fmt.Errorf("parsing secrets file %s: %w", path, err)
+		// encoding/json's message names the first offending byte, which would
+		// put one byte of the file into any log that captures this error. Report
+		// the byte offset instead, never the content.
+		var se *json.SyntaxError
+		if errors.As(err, &se) {
+			return "", fmt.Errorf("secrets file %s is not valid JSON (at byte %d)", path, se.Offset)
+		}
+		return "", fmt.Errorf("secrets file %s is not valid JSON", path)
 	}
 
 	raw, ok := doc[key]

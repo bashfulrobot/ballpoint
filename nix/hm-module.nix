@@ -30,6 +30,15 @@ let
   escapeSystemdExecArg = arg: lib.replaceStrings [ "%" "$" ] [ "%%" "$$" ] (builtins.toJSON arg);
   escapeSystemdExecArgs = args: lib.concatMapStringsSep " " escapeSystemdExecArg args;
 
+  # Unit files are INI, so a newline in a str option value would render as a
+  # second line and inject another directive. Reject it at eval time, the same
+  # defensive posture applied to ExecStart, since an option value can come from
+  # an imported or generated module, not only the machine owner.
+  assertNoNewline = name: value:
+    if lib.hasInfix "\n" value || lib.hasInfix "\r" value
+    then throw "programs.ballpoint.prewarm.${name} must not contain a newline"
+    else value;
+
   # The probe invocation the timer runs. Concurrency and secrets path are passed
   # only when set, so the binary's own defaults apply otherwise. The secrets path
   # is a path, never a credential, so nothing secret enters the store.
@@ -133,7 +142,7 @@ in
           Description = "ballpoint freshness prewarm probe";
           # Bound the on-failure restart so a permanent failure stops looping
           # instead of retrying every restartSec forever.
-          StartLimitIntervalSec = cfg.prewarm.startLimitIntervalSec;
+          StartLimitIntervalSec = assertNoNewline "startLimitIntervalSec" cfg.prewarm.startLimitIntervalSec;
           StartLimitBurst = cfg.prewarm.startLimitBurst;
         };
         Service = {
@@ -142,17 +151,17 @@ in
           # A boot-time network race retries rather than failing the day. No
           # graphical-session binding, so it runs headless under the timer.
           Restart = "on-failure";
-          RestartSec = cfg.prewarm.restartSec;
+          RestartSec = assertNoNewline "restartSec" cfg.prewarm.restartSec;
         };
       };
 
       systemd.user.timers.ballpoint-probe = {
         Unit.Description = "Schedule the ballpoint freshness prewarm probe";
         Timer = {
-          OnCalendar = cfg.prewarm.onCalendar;
-          OnStartupSec = cfg.prewarm.onStartupSec;
+          OnCalendar = assertNoNewline "onCalendar" cfg.prewarm.onCalendar;
+          OnStartupSec = assertNoNewline "onStartupSec" cfg.prewarm.onStartupSec;
           Persistent = true;
-          RandomizedDelaySec = cfg.prewarm.randomizedDelaySec;
+          RandomizedDelaySec = assertNoNewline "randomizedDelaySec" cfg.prewarm.randomizedDelaySec;
         };
         Install.WantedBy = [ "timers.target" ];
       };
