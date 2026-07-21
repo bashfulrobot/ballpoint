@@ -59,7 +59,9 @@ const okOppEnvelope = `{"status":0,"result":{"records":[
 	{"attributes":{"type":"Opportunity"},"Id":"006XX000004Ci1wYAC","LastModifiedDate":"2026-07-20T09:00:00.000+0000"}
 ]}}`
 
-// The object comes from the Lightning URL hint, not the id prefix map.
+// A known-prefix id with an agreeing URL object resolves to that object and is
+// queried there. The prefix (006 -> Opportunity) is authoritative; the URL hint
+// names the same object, so this is the happy path where both sources agree.
 func TestProbeObjectFromURL(t *testing.T) {
 	var args []string
 	c := New(WithRunner(recordRunner(okOppEnvelope, &args)))
