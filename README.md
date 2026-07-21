@@ -23,9 +23,18 @@ are still wired to return `not implemented`.
 
 ```
 ballpoint                                  walk the triage queue
-ballpoint probe [--dry-run] [--benchmark]  refresh freshness data
+ballpoint probe [flags]                    refresh freshness data
 ballpoint dispatch                         run queued work
 ballpoint --version                        print the build version
+```
+
+`probe` flags:
+
+```
+--dry-run              report planned per-system calls, no network, no watermark
+--benchmark            time one real pass and print the wall clock
+--secrets-path PATH    off-store secrets file (default ~/.config/nixos-secrets/secrets.json)
+--concurrency N        bounded Todoist fetch concurrency (default 12)
 ```
 
 The still-unimplemented subcommands exit non-zero, so the systemd timer in
@@ -240,6 +249,36 @@ timer.
 `programs.ballpoint.package` defaults to this flake's build, so consumers do
 not need to wire the overlay. `overlays.default` is exported for those who
 want it.
+
+### Prewarm timer
+
+`ballpoint probe` needs no human input, so it should run on a schedule and be
+warm before you start a triage session. Set `programs.ballpoint.prewarm.enable`
+to run `ballpoint probe` on a systemd user timer.
+
+```nix
+programs.ballpoint = {
+  enable = true;
+  prewarm = {
+    enable = true;
+    onCalendar = "Mon..Fri 08,12,16:00";   # a few times across the working day
+    concurrency = 8;                         # optional, 0 keeps the default of 12
+    # secretsPath = "/home/you/.config/nixos-secrets/secrets.json";  # optional override
+  };
+};
+```
+
+The timer sets `OnCalendar`, `OnStartupSec`, `Persistent = true`, and
+`RandomizedDelaySec`. A run missed while the machine was off is caught up on the
+next boot, and a reboot triggers a fresh pass. The service is `Type = oneshot`
+with `Restart = on-failure`, so a boot-time network race retries instead of
+failing the day. It is not bound to `graphical-session.target`, so it runs
+whether or not a desktop session is active. `secretsPath` is a path, not a
+credential, so nothing secret enters the Nix store. The probe reads the values
+from that file at runtime.
+
+Firing user timers at boot rather than at login needs systemd user lingering,
+tracked in `nixerator#237`.
 
 ## Licence
 
