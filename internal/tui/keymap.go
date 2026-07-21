@@ -3,6 +3,7 @@ package tui
 // Tier is the gating tier of a keyword, from references/lexicon.md.
 type Tier int
 
+// Tier values, ordered from least to most consequential.
 const (
 	TierNav        Tier = iota // read-only or navigation, no write
 	TierInternal               // reversible write, runs on the keypress
@@ -16,6 +17,7 @@ const (
 // name, makes the mapping unit-testable and obvious at the call site.
 type ArgStyle int
 
+// ArgStyle values, one per script flag shape.
 const (
 	ArgNone       ArgStyle = iota // nav and outward verbs take no macro argument
 	ArgReason                     // --reason <text> (escalate, done, drop)

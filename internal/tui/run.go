@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/bashfulrobot/ballpoint/internal/probe"
 	"github.com/bashfulrobot/ballpoint/internal/store"
 )
 
@@ -29,38 +28,25 @@ type WalkConfig struct {
 	OpenURL    func(url string) error
 }
 
-// WalkData is a fully resolved walk, ready to drive a Model. It is the output of
-// ResolveWalk and the input to Run, so the pure resolution is testable without a
-// terminal.
-type WalkData struct {
-	Cards     []Card
-	Scope     Scope
-	Report    probe.Report
-	Store     *store.Store
-	StateRoot string
-	Macro     Macro
-	Now       time.Time
-	OpenURL   func(url string) error
-}
-
 // ResolveWalk reads the cache, resolves the scope to cards, and sorts moved-first.
 // It never fetches. An empty cache is ErrEmptyCache; a non-empty cache that the
-// scope filters to nothing is ErrScopeEmpty.
-func ResolveWalk(cfg WalkConfig) (WalkData, error) {
+// scope filters to nothing is ErrScopeEmpty. The returned Config is ready to
+// drive a Model, so this pure resolution is testable without a terminal.
+func ResolveWalk(cfg WalkConfig) (Config, error) {
 	st, err := store.Open(cfg.StateDir)
 	if err != nil {
-		return WalkData{}, err
+		return Config{}, err
 	}
 	tasks, err := st.LoadAllTasks()
 	if err != nil {
-		return WalkData{}, err
+		return Config{}, err
 	}
 	if len(tasks) == 0 {
-		return WalkData{}, ErrEmptyCache
+		return Config{}, ErrEmptyCache
 	}
 	report, _, err := st.LoadReport()
 	if err != nil {
-		return WalkData{}, err
+		return Config{}, err
 	}
 
 	now := cfg.Now
@@ -79,7 +65,7 @@ func ResolveWalk(cfg WalkConfig) (WalkData, error) {
 		}
 	}
 	if len(cards) == 0 {
-		return WalkData{}, fmt.Errorf("%w: %s", ErrScopeEmpty, scopeLabel(cfg.Scope))
+		return Config{}, fmt.Errorf("%w: %s", ErrScopeEmpty, scopeLabel(cfg.Scope))
 	}
 	SortMovedFirst(cards)
 
@@ -87,11 +73,11 @@ func ResolveWalk(cfg WalkConfig) (WalkData, error) {
 	if scriptsDir == "" {
 		scriptsDir, err = DefaultScriptsDir()
 		if err != nil {
-			return WalkData{}, err
+			return Config{}, err
 		}
 	}
 
-	return WalkData{
+	return Config{
 		Cards:     cards,
 		Scope:     cfg.Scope,
 		Report:    report,
@@ -103,24 +89,15 @@ func ResolveWalk(cfg WalkConfig) (WalkData, error) {
 	}, nil
 }
 
-// Run builds the Model from resolved data, restores the cursor for a matching
-// resumed scope, and runs the Bubbletea program. It requires a terminal; the
-// caller is responsible for that check.
-func Run(d WalkData) error {
-	m := NewModel(Config{
-		Cards:     d.Cards,
-		Scope:     d.Scope,
-		Report:    d.Report,
-		Store:     d.Store,
-		StateRoot: d.StateRoot,
-		Macro:     d.Macro,
-		Now:       d.Now,
-		OpenURL:   d.OpenURL,
-	})
+// Run builds the Model from a resolved Config, restores the cursor for a
+// matching resumed scope, and runs the Bubbletea program. It requires a
+// terminal; the caller is responsible for that check.
+func Run(cfg Config) error {
+	m := NewModel(cfg)
 
-	if s, ok, _ := LoadSession(d.StateRoot); ok && s.Scope == d.Scope {
-		order := make([]string, len(d.Cards))
-		for i, c := range d.Cards {
+	if s, ok, _ := LoadSession(cfg.StateRoot); ok && s.Scope == cfg.Scope {
+		order := make([]string, len(cfg.Cards))
+		for i, c := range cfg.Cards {
 			order[i] = c.TaskID
 		}
 		m.cursor = ResolveCursor(order, s.Cursor)

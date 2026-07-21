@@ -156,7 +156,7 @@ func (m Model) footerView() string {
 	}
 	switch {
 	case m.confirming:
-		b.WriteString(fmt.Sprintf("%s %q? [y/n]", m.confirmVerb.Name, m.confirmArg))
+		fmt.Fprintf(&b, "%s %q? [y/n]", m.confirmVerb.Name, m.confirmArg)
 	case m.prompting:
 		b.WriteString(m.prompt.View())
 	default:
@@ -197,7 +197,7 @@ func (m Model) helpView() string {
 		if v.Key == 0 {
 			continue
 		}
-		b.WriteString(fmt.Sprintf("  %c  %-9s %s\n", v.Key, v.Name, tierLabel(v.Tier)))
+		fmt.Fprintf(&b, "  %c  %-9s %s\n", v.Key, v.Name, tierLabel(v.Tier))
 	}
 	b.WriteString(dimStyle.Render("  outward sends (nudge, email, teams) are queued from draft, never sent here"))
 	b.WriteString("\n")

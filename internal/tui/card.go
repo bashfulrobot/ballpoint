@@ -12,6 +12,7 @@ import (
 // LinkState is how a link's freshness renders in the footer.
 type LinkState int
 
+// LinkState values, one per freshness outcome.
 const (
 	LinkFresh     LinkState = iota // checked, no new activity since the work-log
 	LinkMoved                      // external activity newer than the work-log

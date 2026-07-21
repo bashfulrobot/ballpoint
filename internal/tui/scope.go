@@ -9,6 +9,7 @@ import (
 // ScopeKind is how a scope selects tasks from the cached corpus.
 type ScopeKind int
 
+// ScopeKind values, one per way of selecting a subset of the corpus.
 const (
 	ScopeProject ScopeKind = iota
 	ScopeFilter            // a raw or saved filter query

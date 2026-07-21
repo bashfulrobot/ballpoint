@@ -155,7 +155,7 @@ func (m Model) handleNav(v Verb) (tea.Model, tea.Cmd) {
 	case "back":
 		return m.move(-1)
 	case "more":
-		m.viewport.HalfViewDown()
+		m.viewport.HalfPageDown()
 		return m, nil
 	case "dig":
 		m.viewport.GotoTop()

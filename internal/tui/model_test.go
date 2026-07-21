@@ -125,7 +125,7 @@ func TestModelCompletionConfirms(t *testing.T) {
 	if len(rec.calls) != 0 {
 		t.Fatalf("macro ran before confirm: %v", rec.calls)
 	}
-	out, _ = m2.Update(key('y'))
+	m2.Update(key('y'))
 	if len(rec.calls) != 1 {
 		t.Fatalf("macro calls after confirm = %d, want 1", len(rec.calls))
 	}
@@ -172,7 +172,7 @@ func TestModelDraftPlainShellsOut(t *testing.T) {
 	m, rec := newTestModel(t, 1)
 	out, _ := m.Update(key('r'))
 	out, _ = out.(Model).Update(typeInto("remember to follow up"))
-	out, _ = out.(Model).Update(enter())
+	out.(Model).Update(enter())
 	if len(rec.calls) != 1 {
 		t.Fatalf("plain draft should shell out once, got %d calls", len(rec.calls))
 	}

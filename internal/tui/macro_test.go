@@ -26,7 +26,7 @@ func TestMacroExecArgv(t *testing.T) {
 }
 
 func TestMacroExecSurfacesStderr(t *testing.T) {
-	m := Macro{Dir: "/s", Run: func(name string, args ...string) ([]byte, error) {
+	m := Macro{Dir: "/s", Run: func(_ string, _ ...string) ([]byte, error) {
 		return []byte("boom: bad column\n"), errors.New("exit status 1")
 	}}
 	err := m.Exec(Verb{Name: "col", Script: "td_move.sh"}, "1", []string{"Nope"})
