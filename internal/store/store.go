@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bashfulrobot/ballpoint/internal/probe"
 	"github.com/bashfulrobot/ballpoint/internal/sources"
 )
 
@@ -110,6 +111,95 @@ func (s *Store) SaveTask(t sources.Task) error {
 		return err
 	}
 	return writeAtomic(path, t)
+}
+
+// LoadAllTasks reads every cached task, so the TUI can walk the corpus offline.
+// A malformed or unreadable entry is skipped rather than failing the whole walk,
+// so one bad cache file does not blank the queue. Order is not guaranteed; the
+// caller sorts.
+func (s *Store) LoadAllTasks() ([]sources.Task, error) {
+	cacheDir := filepath.Join(s.root, "cache")
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading cache directory %s: %w", cacheDir, err)
+	}
+	tasks := make([]sources.Task, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		t, ok, err := s.LoadTask(id)
+		if err != nil || !ok {
+			continue
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, nil
+}
+
+// PruneTasksExcept deletes every cached task whose id is not in keep. The probe
+// writes the current open set, so tasks completed or deleted in Todoist would
+// otherwise linger in the cache and keep surfacing in the walk. A file that
+// fails to delete is reported but does not stop the prune, so one locked entry
+// does not block the rest. It returns the count removed.
+func (s *Store) PruneTasksExcept(keep map[string]bool) (int, error) {
+	cacheDir := filepath.Join(s.root, "cache")
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("reading cache directory %s: %w", cacheDir, err)
+	}
+	removed := 0
+	var firstErr error
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if keep[id] {
+			continue
+		}
+		if err := os.Remove(filepath.Join(cacheDir, e.Name())); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("removing stale cache entry %s: %w", e.Name(), err)
+			}
+			continue
+		}
+		removed++
+	}
+	return removed, firstErr
+}
+
+func (s *Store) reportPath() string { return filepath.Join(s.root, "report.json") }
+
+// SaveReport writes the freshness report atomically, mirroring SaveWatermark.
+// The TUI reads it to overlay per-link freshness on each card.
+func (s *Store) SaveReport(r probe.Report) error {
+	return writeAtomic(s.reportPath(), r)
+}
+
+// LoadReport reads the freshness report. ok is false when no probe has written
+// one yet, so a first run before any probe still opens (with no freshness data)
+// rather than erroring.
+func (s *Store) LoadReport() (probe.Report, bool, error) {
+	data, err := os.ReadFile(s.reportPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return probe.Report{}, false, nil
+	}
+	if err != nil {
+		return probe.Report{}, false, fmt.Errorf("reading %s: %w", s.reportPath(), err)
+	}
+	var r probe.Report
+	if err := json.Unmarshal(data, &r); err != nil {
+		return probe.Report{}, false, fmt.Errorf("parsing %s: %w", s.reportPath(), err)
+	}
+	return r, true, nil
 }
 
 // writeAtomic marshals v and writes it by creating a temp file in the target's
