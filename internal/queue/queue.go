@@ -9,10 +9,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/bashfulrobot/ballpoint/internal/fsutil"
 )
+
+// removeMu serializes Remove's read-modify-write within a process. The
+// dispatcher runs many jobs concurrently and each drains its own entries, so
+// two unsynchronized rewrites would race on the whole file and lose one set of
+// removals (last writer wins). A single dispatch process is the only writer in
+// practice, so a process mutex is enough; concurrent dispatch processes are not
+// a supported mode.
+var removeMu sync.Mutex
 
 // Entry is one queued outward action, serialised as one JSON object per line.
 //
@@ -95,6 +104,9 @@ func Load(root string) ([]Entry, error) {
 // The dispatcher calls this only for a task whose assessment fully succeeded,
 // so a failed or requeued task keeps its entries for the next run.
 func Remove(root string, ids map[string]bool) (int, error) {
+	removeMu.Lock()
+	defer removeMu.Unlock()
+
 	entries, err := Load(root)
 	if err != nil {
 		return 0, err

@@ -4,10 +4,26 @@ package fsutil
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// SafeFilename rejects an id that is not usable as a single path segment, so a
+// drifted or spoofed identifier cannot escape the directory it is joined into.
+// It is the one guard for every id-to-filename join (task cache, dispatch
+// status), so the two callers cannot drift apart.
+func SafeFilename(id string) error {
+	if id == "" {
+		return errors.New("empty id")
+	}
+	if strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") || strings.HasPrefix(id, ".") {
+		return fmt.Errorf("id %q is not a safe filename", id)
+	}
+	return nil
+}
 
 // WriteBytesAtomic writes data to path atomically: a temp file in the same
 // directory, fsynced and renamed over path. A crash never leaves a partially

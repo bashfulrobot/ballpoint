@@ -67,12 +67,16 @@ func TestRunSuccessWritesBackAndDrains(t *testing.T) {
 	if sum.Succeeded != 1 {
 		t.Errorf("summary = %+v, want 1 succeeded", sum)
 	}
-	// Two script calls: the work-log write and the draft log.
+	if sum.CostUSD != 0.01 {
+		t.Errorf("summary cost = %v, want 0.01", sum.CostUSD)
+	}
+	// Two script calls: the draft log then the assessment write. Drafts run
+	// first so the assessment is the last write before the drain.
 	if len(rec.calls) != 2 {
 		t.Fatalf("script calls = %d, want 2 (%v)", len(rec.calls), rec.calls)
 	}
-	if rec.calls[0][0] != "/scripts/td_worklog.sh" || rec.calls[1][0] != "/scripts/td_draft.sh" {
-		t.Errorf("call order = %v", rec.calls)
+	if rec.calls[0][0] != "/scripts/td_draft.sh" || rec.calls[1][0] != "/scripts/td_worklog.sh" {
+		t.Errorf("call order = %v, want draft then worklog", rec.calls)
 	}
 	left, _ := queue.Load(root)
 	if len(left) != 0 {
@@ -81,6 +85,51 @@ func TestRunSuccessWritesBackAndDrains(t *testing.T) {
 	got, _ := LoadStatuses(root)
 	if len(got) != 1 || got[0].State != StateSucceeded {
 		t.Errorf("status = %+v", got)
+	}
+}
+
+func TestRunTwoTasksDrainWholeQueue(t *testing.T) {
+	root := t.TempDir()
+	st, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"1", "2"} {
+		if err := st.SaveTask(sources.Task{ID: id, Title: "t" + id}); err != nil {
+			t.Fatal(err)
+		}
+		if err := queue.Append(root, queue.Entry{ID: "e" + id, TaskID: id, TaskRef: "id:" + id, Channel: "nudge", To: "#t", Body: "hi"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, _ := queue.Load(root)
+	rec := &recorder{}
+	cfg := Config{
+		Store:       st,
+		Root:        root,
+		Report:      probe.Report{Tasks: map[string]probe.TaskReport{}},
+		Entries:     entries,
+		ScriptsDir:  "/scripts",
+		Concurrency: 2,
+		Now:         func() time.Time { return time.Unix(0, 0).UTC() },
+		Assess: func(context.Context, string) (Assessment, float64, error) {
+			return Assessment{Summary: "assessed"}, 0.02, nil
+		},
+		RunScript: rec.run,
+		Stdout:    io.Discard,
+	}
+	sum, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Succeeded != 2 {
+		t.Errorf("summary = %+v, want 2 succeeded", sum)
+	}
+	// Both tasks drain concurrently. Remove serializes internally, so no
+	// removal is lost and the queue ends empty.
+	left, _ := queue.Load(root)
+	if len(left) != 0 {
+		t.Errorf("concurrent drain lost removals, queue = %+v", left)
 	}
 }
 

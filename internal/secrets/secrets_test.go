@@ -77,13 +77,18 @@ func TestLoadNeverLeaksValue(t *testing.T) {
 // arbitrary readable file into the journal, so the error must report the byte
 // offset, never the content.
 func TestLoadMalformedNeverLeaksContent(t *testing.T) {
-	path := writeSecrets(t, "ZZSENSITIVE not json at all")
+	// The marker is a distinctive multi-character token that cannot appear in a
+	// filesystem path, so a match in the error means the file content leaked.
+	// A single-character sentinel would false-positive on the temp directory
+	// name, which the error legitimately includes (for example nix-shell.oRZCsJ
+	// under `nix develop`).
+	path := writeSecrets(t, "SENSITIVE_LEAK_MARKER not json at all")
 
 	_, err := Load(path, "todoist_token")
 	if err == nil {
 		t.Fatal("Load() error = nil, want a malformed-JSON error")
 	}
-	if strings.ContainsAny(err.Error(), "Z") || strings.Contains(err.Error(), "SENSITIVE") {
+	if strings.Contains(err.Error(), "SENSITIVE_LEAK_MARKER") {
 		t.Errorf("Load() error leaked file content: %q", err)
 	}
 	if !strings.Contains(err.Error(), "not valid JSON") {
@@ -94,13 +99,15 @@ func TestLoadMalformedNeverLeaksContent(t *testing.T) {
 // A token with a control character is rejected at load, so it never reaches an
 // HTTP header, and the value does not appear in the error.
 func TestLoadRejectsControlCharacter(t *testing.T) {
-	path := writeSecrets(t, `{"todoist_token":"abc\ndef"}`)
+	// Distinctive markers around the control character, so a leak check cannot
+	// false-positive on the temp path the error legitimately includes.
+	path := writeSecrets(t, `{"todoist_token":"TOKENLEAKA\nTOKENLEAKB"}`)
 
 	_, err := Load(path, "todoist_token")
 	if err == nil {
 		t.Fatal("Load() error = nil, want a control-character rejection")
 	}
-	if strings.Contains(err.Error(), "abc") || strings.Contains(err.Error(), "def") {
+	if strings.Contains(err.Error(), "TOKENLEAKA") || strings.Contains(err.Error(), "TOKENLEAKB") {
 		t.Errorf("Load() error leaked the token value: %q", err)
 	}
 }

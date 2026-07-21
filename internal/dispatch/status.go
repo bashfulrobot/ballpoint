@@ -36,20 +36,8 @@ type Status struct {
 
 func statusDir(root string) string { return filepath.Join(root, "dispatch") }
 
-// safeID rejects a task id that is not usable as a filename, matching the
-// store's discipline so a drifted id cannot escape the dispatch directory.
-func safeID(id string) error {
-	if id == "" {
-		return errors.New("empty task id")
-	}
-	if strings.ContainsAny(id, `/\`) || strings.Contains(id, "..") || strings.HasPrefix(id, ".") {
-		return fmt.Errorf("task id %q is not a safe filename", id)
-	}
-	return nil
-}
-
 func statusPath(root, id string) (string, error) {
-	if err := safeID(id); err != nil {
+	if err := fsutil.SafeFilename(id); err != nil {
 		return "", err
 	}
 	return filepath.Join(statusDir(root), id+".json"), nil

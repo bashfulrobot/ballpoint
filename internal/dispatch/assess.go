@@ -39,10 +39,12 @@ type cliResult struct {
 	TotalCostUSD   float64 `json:"total_cost_usd"`
 }
 
-// ParseAssessment decodes the model's final text into an Assessment. It strips
-// a wrapping Markdown code fence if present and requires a non-empty summary.
+// ParseAssessment decodes the model's assessment. It strips a wrapping code
+// fence, extracts the first balanced JSON object (so a haiku that adds a
+// sentence before or after the JSON still parses), and requires a non-empty
+// summary.
 func ParseAssessment(raw string) (Assessment, error) {
-	body := stripFence(strings.TrimSpace(raw))
+	body := extractJSONObject(stripFence(strings.TrimSpace(raw)))
 	var a Assessment
 	if err := jsonUnmarshalStrict(body, &a); err != nil {
 		return Assessment{}, fmt.Errorf("parsing assessment: %w", err)
@@ -51,6 +53,46 @@ func ParseAssessment(raw string) (Assessment, error) {
 		return Assessment{}, errors.New("assessment has an empty summary")
 	}
 	return a, nil
+}
+
+// extractJSONObject returns the first balanced {...} object in s, ignoring
+// braces inside JSON strings, or s unchanged when there is no opening brace.
+// This tolerates a model that wraps its JSON in prose despite the instruction
+// to emit bare JSON.
+func extractJSONObject(s string) string {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return s
+	}
+	depth := 0
+	inStr := false
+	esc := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1]
+			}
+		}
+	}
+	return s[start:]
 }
 
 // assessmentFromEnvelope turns a decoded CLI envelope into an Assessment,
@@ -100,12 +142,15 @@ func jsonUnmarshalStrict(s string, v any) error {
 	return nil
 }
 
-// claudeArgv is the locked-down headless invocation. No tools, no prompts, no
-// session persistence, JSON output. The prompt is fed on stdin, never argv, so
-// task content cannot land in the process table.
+// claudeArgv is the locked-down headless invocation. --bare makes the run
+// hermetic: no hooks, no auto-memory, no CLAUDE.md auto-discovery, so the piped
+// prompt is the whole input and cost does not balloon with repo context. No
+// tools, no prompts, no session persistence, JSON output. The prompt is fed on
+// stdin, never argv, so task content cannot land in the process table.
 func claudeArgv(model string) []string {
 	return []string{
 		"-p",
+		"--bare",
 		"--output-format", "json",
 		"--model", model,
 		"--tools", "",
@@ -114,24 +159,36 @@ func claudeArgv(model string) []string {
 	}
 }
 
+// decodeCLIOutput turns claude's stdout (and the exec error, if any) into an
+// Assessment. A valid JSON envelope is authoritative even when the process
+// exited nonzero: claude writes the error envelope to stdout and exits 1 on an
+// API error, including a 429 usage limit, so the envelope must be parsed before
+// the exec error is trusted. Otherwise the usage-limit path never fires.
+func decodeCLIOutput(stdout []byte, runErr error) (Assessment, float64, error) {
+	var env cliResult
+	if err := json.Unmarshal(stdout, &env); err == nil {
+		return assessmentFromEnvelope(env)
+	}
+	if runErr != nil {
+		return Assessment{}, 0, fmt.Errorf("running claude: %w", runErr)
+	}
+	return Assessment{}, 0, fmt.Errorf("decoding claude output: %q", string(stdout))
+}
+
 // ExecAssess returns an assessor that shells out to the local claude CLI. The
 // returned function matches Config.Assess.
 func ExecAssess(model string) func(ctx context.Context, prompt string) (Assessment, float64, error) {
 	return func(ctx context.Context, prompt string) (Assessment, float64, error) {
 		cmd := exec.CommandContext(ctx, "claude", claudeArgv(model)...)
 		cmd.Stdin = strings.NewReader(prompt)
+		// Output captures stdout even on a nonzero exit; the error envelope
+		// lives there, so it is decoded rather than discarded.
 		out, err := cmd.Output()
-		if err != nil {
-			// A cancelled context surfaces here; report it so the job requeues.
-			if ctx.Err() != nil {
-				return Assessment{}, 0, ctx.Err()
-			}
-			return Assessment{}, 0, fmt.Errorf("running claude: %w", err)
+		if ctx.Err() != nil {
+			// A cancelled context (a peer job hit the usage limit, or Ctrl-C)
+			// requeues rather than failing.
+			return Assessment{}, 0, ctx.Err()
 		}
-		var env cliResult
-		if err := json.Unmarshal(out, &env); err != nil {
-			return Assessment{}, 0, fmt.Errorf("decoding claude output: %w", err)
-		}
-		return assessmentFromEnvelope(env)
+		return decodeCLIOutput(out, err)
 	}
 }

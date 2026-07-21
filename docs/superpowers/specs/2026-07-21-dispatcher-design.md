@@ -74,10 +74,27 @@ function that takes an injected struct.
       records `succeeded`.
 5. `Run` returns a summary: succeeded, failed, requeued, and skipped counts.
 
-Writeback (network) happens before drain (local file op), so a failed writeback
-leaves the entries queued with no partial state. The only duplicate-write
-window is a drain failure after a successful writeback, which is a local atomic
-rename and rare.
+Within a job the drafts are logged first and the assessment work-log write is
+the last step before the drain, so if a draft fails the assessment is never
+written and a retry cannot duplicate the assessment (the primary artifact). The
+writeback and drain run under a cancellation-shielded context, so a pool cancel
+(a peer job hitting the usage limit, or Ctrl-C) stops future jobs but never
+kills a writeback that has already started.
+
+Two duplicate-write windows remain and are accepted for this version. A
+writeback script failure after some writes committed (for example a draft that
+fails after another draft already logged) leaves the task queued, so the retry
+re-runs the earlier writes and re-spends one assessment. The impact is a
+duplicate same-day work-log bullet, never a duplicate outward send, and a
+script failure is rare. A crash between the assessment write and the drain has
+the same effect. Fully removing these needs a dedup key in the external
+`td_worklog.sh` writer, which is out of this repo.
+
+Concurrency correctness: many jobs drain their own entries at once, and
+`queue.Remove` is a read-modify-write over the whole file. It is serialized by a
+process mutex so two concurrent rewrites cannot lose one set of removals. A
+single dispatch process is the only writer in practice; concurrent dispatch
+processes are not a supported mode.
 
 ## CLI surface
 

@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -56,6 +57,56 @@ func TestDecodeCLIResultOtherError(t *testing.T) {
 	_, _, err := assessmentFromEnvelope(env)
 	if err == nil || errors.Is(err, ErrUsageLimit) {
 		t.Errorf("err = %v, want a non-usage error", err)
+	}
+}
+
+func TestParseAssessmentExtractsFromProse(t *testing.T) {
+	raw := "Sure, here is the assessment:\n{\"summary\":\"looks done\"}\nLet me know if you need more."
+	a, err := ParseAssessment(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Summary != "looks done" {
+		t.Errorf("summary = %q", a.Summary)
+	}
+}
+
+func TestExtractJSONObjectIgnoresBracesInStrings(t *testing.T) {
+	got := extractJSONObject(`prefix {"summary":"a } b","next":""} suffix`)
+	if got != `{"summary":"a } b","next":""}` {
+		t.Errorf("extractJSONObject = %q", got)
+	}
+}
+
+func TestDecodeCLIOutputUsageLimitOnNonzeroExit(t *testing.T) {
+	// claude exits nonzero on an API error but still writes the envelope to
+	// stdout. The envelope must be parsed before the exec error is trusted, or
+	// the 429 requeue path never fires.
+	status := 429
+	env := cliResult{IsError: true, APIErrorStatus: &status, Result: "rate limited"}
+	out, _ := json.Marshal(env)
+	_, _, err := decodeCLIOutput(out, errors.New("exit status 1"))
+	if !errors.Is(err, ErrUsageLimit) {
+		t.Errorf("err = %v, want ErrUsageLimit", err)
+	}
+}
+
+func TestDecodeCLIOutputExecErrorWithoutEnvelope(t *testing.T) {
+	_, _, err := decodeCLIOutput([]byte("segfault"), errors.New("exit status 139"))
+	if err == nil || errors.Is(err, ErrUsageLimit) {
+		t.Errorf("err = %v, want a plain run error", err)
+	}
+}
+
+func TestDecodeCLIOutputSuccess(t *testing.T) {
+	env := cliResult{Result: `{"summary":"done"}`, TotalCostUSD: 0.03}
+	out, _ := json.Marshal(env)
+	a, cost, err := decodeCLIOutput(out, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Summary != "done" || cost != 0.03 {
+		t.Errorf("assessment = %+v cost = %v", a, cost)
 	}
 }
 

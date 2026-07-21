@@ -145,6 +145,7 @@ func runDispatch(deps dispatchDeps, stdout, _ io.Writer) error {
 		_, _ = fmt.Fprintf(stdout, "dry run: %d task(s) would be dispatched\n", sum.Skipped)
 		return nil
 	}
-	_, _ = fmt.Fprintf(stdout, "dispatched: %d succeeded, %d failed, %d requeued\n", sum.Succeeded, sum.Failed, sum.Requeued)
+	_, _ = fmt.Fprintf(stdout, "dispatched: %d succeeded, %d failed, %d requeued, spent $%.4f\n",
+		sum.Succeeded, sum.Failed, sum.Requeued, sum.CostUSD)
 	return nil
 }

@@ -37,6 +37,7 @@ type Summary struct {
 	Failed    int
 	Requeued  int
 	Skipped   int
+	CostUSD   float64
 }
 
 // taskGroup groups a task id with the queue entries that named it.
@@ -75,13 +76,15 @@ func Run(ctx context.Context, cfg Config) (Summary, error) {
 		limit = 1
 	}
 	outcomes := make([]outcome, len(groups))
+	costs := make([]float64, len(groups))
 	group, gctx := errgroup.WithContext(ctx)
 	group.SetLimit(limit)
 	for i := range groups {
 		i := i
 		group.Go(func() error {
-			out, usage := runJob(gctx, cfg, groups[i])
+			out, usage, cost := runJob(gctx, cfg, groups[i])
 			outcomes[i] = out
+			costs[i] = cost
 			if usage {
 				// Cancel the rest; they will see gctx done and requeue.
 				return ErrUsageLimit
@@ -94,7 +97,8 @@ func Run(ctx context.Context, cfg Config) (Summary, error) {
 	_ = group.Wait()
 
 	var sum Summary
-	for _, o := range outcomes {
+	for i, o := range outcomes {
+		sum.CostUSD += costs[i]
 		switch o {
 		case outSucceeded:
 			sum.Succeeded++
@@ -126,13 +130,14 @@ func groupByTask(entries []queue.Entry) []taskGroup {
 }
 
 // runJob assesses one task and writes back. The bool return is true only when
-// the job hit the usage limit, which tells Run to cancel the rest.
-func runJob(ctx context.Context, cfg Config, g taskGroup) (outcome, bool) {
+// the job hit the usage limit, which tells Run to cancel the rest. The float64
+// is the assessment cost, accumulated even on a failed or requeued attempt.
+func runJob(ctx context.Context, cfg Config, g taskGroup) (outcome, bool, float64) {
 	now := cfg.Now()
 	// A job that never starts because the pool was cancelled requeues.
 	if ctx.Err() != nil {
 		writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateRequeued, StartedAt: now, EndedAt: now})
-		return outRequeued, false
+		return outRequeued, false, 0
 	}
 
 	task, ok, err := cfg.Store.LoadTask(g.id)
@@ -142,7 +147,7 @@ func runJob(ctx context.Context, cfg Config, g taskGroup) (outcome, bool) {
 			detail = err.Error()
 		}
 		writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateFailed, Detail: detail, StartedAt: now, EndedAt: now})
-		return outFailed, false
+		return outFailed, false, 0
 	}
 
 	writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateRunning, StartedAt: now})
@@ -150,40 +155,50 @@ func runJob(ctx context.Context, cfg Config, g taskGroup) (outcome, bool) {
 	nonce, err := newNonce()
 	if err != nil {
 		writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateFailed, Detail: err.Error(), StartedAt: now, EndedAt: cfg.Now()})
-		return outFailed, false
+		return outFailed, false, 0
 	}
 	prompt := BuildPrompt(task, cfg.Report.Tasks[g.id], nonce)
 
 	assessment, cost, err := cfg.Assess(ctx, prompt)
 	if err != nil {
 		// An explicit usage limit, or a cancelled context because another job
-		// hit the limit, means requeue; anything else is a real failure.
+		// hit the limit, means requeue; anything else is a real failure. The
+		// cost the attempt already incurred is kept in the status either way.
 		if errors.Is(err, ErrUsageLimit) {
-			writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateRequeued, StartedAt: now, EndedAt: cfg.Now()})
-			return outRequeued, true
+			writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateRequeued, Detail: "usage limit", CostUSD: cost, StartedAt: now, EndedAt: cfg.Now()})
+			return outRequeued, true, cost
 		}
 		if ctx.Err() != nil {
-			writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateRequeued, StartedAt: now, EndedAt: cfg.Now()})
-			return outRequeued, false
+			writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateRequeued, CostUSD: cost, StartedAt: now, EndedAt: cfg.Now()})
+			return outRequeued, false, cost
 		}
 		writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateFailed, Detail: err.Error(), CostUSD: cost, StartedAt: now, EndedAt: cfg.Now()})
-		return outFailed, false
+		return outFailed, false, cost
 	}
 
-	// Writeback (network) before drain (local). A failure here leaves the queue
-	// untouched, so the task retries on the next run.
-	if err := cfg.RunScript(ctx, WorklogArgv(cfg.ScriptsDir, g.ref, assessment)); err != nil {
-		writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateFailed, Detail: err.Error(), CostUSD: cost, StartedAt: now, EndedAt: cfg.Now()})
-		return outFailed, false
-	}
+	// The writeback and drain run under a shielded context so a pool cancel (a
+	// peer job hitting the usage limit, or Ctrl-C) stops future work but never
+	// SIGKILLs a writeback that has already been paid for and started. Drafts
+	// are logged first, so the assessment work-log write is the last step
+	// before the drain. If a draft fails, the assessment is never written, so a
+	// retry never duplicates the assessment (the primary artifact).
+	wbCtx := context.WithoutCancel(ctx)
+
+	dropped := 0
 	for _, e := range g.entries {
 		if e.Channel == "" || e.To == "" || e.Body == "" {
-			continue // malformed draft, nothing to log
+			dropped++ // malformed draft, nothing to log; recorded below
+			continue
 		}
-		if err := cfg.RunScript(ctx, DraftArgv(cfg.ScriptsDir, g.ref, e)); err != nil {
+		if err := cfg.RunScript(wbCtx, DraftArgv(cfg.ScriptsDir, g.ref, e)); err != nil {
 			writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateFailed, Detail: err.Error(), CostUSD: cost, StartedAt: now, EndedAt: cfg.Now()})
-			return outFailed, false
+			return outFailed, false, cost
 		}
+	}
+
+	if err := cfg.RunScript(wbCtx, WorklogArgv(cfg.ScriptsDir, g.ref, assessment)); err != nil {
+		writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateFailed, Detail: err.Error(), CostUSD: cost, StartedAt: now, EndedAt: cfg.Now()})
+		return outFailed, false, cost
 	}
 
 	ids := map[string]bool{}
@@ -192,11 +207,23 @@ func runJob(ctx context.Context, cfg Config, g taskGroup) (outcome, bool) {
 	}
 	if _, err := queue.Remove(cfg.Root, ids); err != nil {
 		writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateFailed, Detail: "drain: " + err.Error(), CostUSD: cost, StartedAt: now, EndedAt: cfg.Now()})
-		return outFailed, false
+		return outFailed, false, cost
 	}
 
-	writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateSucceeded, CostUSD: cost, StartedAt: now, EndedAt: cfg.Now()})
-	return outSucceeded, false
+	detail := ""
+	if dropped > 0 {
+		detail = fmt.Sprintf("dropped %d malformed queue entr%s", dropped, plural(dropped))
+	}
+	writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateSucceeded, Detail: detail, CostUSD: cost, StartedAt: now, EndedAt: cfg.Now()})
+	return outSucceeded, false, cost
+}
+
+// plural returns the suffix for "entry"/"entries" style pluralization.
+func plural(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
 }
 
 // runDry prints each task's prompt and planned writes without invoking or
