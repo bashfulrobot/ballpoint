@@ -23,6 +23,20 @@ func TestBuildSkipsMissingCreds(t *testing.T) {
 	}
 }
 
+// The Salesforce prober registers on the availability flag, not a token: its
+// auth lives in the sf CLI's own store.
+func TestBuildSalesforceOnAvailability(t *testing.T) {
+	reg := Build(Credentials{Salesforce: true})
+	if _, ok := reg.For(links.SystemSalesforce); !ok {
+		t.Error("salesforce prober not registered despite Salesforce=true")
+	}
+
+	reg2 := Build(Credentials{})
+	if _, ok := reg2.For(links.SystemSalesforce); ok {
+		t.Error("salesforce prober registered when Salesforce=false")
+	}
+}
+
 // A google token registers both Gmail and Drive, since they share it.
 func TestBuildGoogleSharesToken(t *testing.T) {
 	reg := Build(Credentials{Google: "test-token"})

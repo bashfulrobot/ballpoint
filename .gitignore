@@ -1,0 +1,3 @@
+# github-issue CLI per-worktree state
+.worktree-state.json
+.worktree.lock

@@ -84,6 +84,53 @@ func TestExtractNoDoubleCountInsideURL(t *testing.T) {
 	}
 }
 
+// A Lightning record URL is categorised as Salesforce, carries the object hint,
+// and is counted once, not a second time as a bare id inside the URL.
+func TestExtractSalesforceLightningURL(t *testing.T) {
+	u := "https://myorg.lightning.force.com/lightning/r/Account/001XX000003DHPhYAO/view"
+	task := sources.Task{ID: "sf1", Title: "acct " + u}
+
+	var sf []Link
+	for _, l := range Extract(task) {
+		if l.System == SystemSalesforce {
+			sf = append(sf, l)
+		}
+	}
+	if len(sf) != 1 {
+		t.Fatalf("salesforce link count = %d, want 1 (no bare double-count inside the URL)", len(sf))
+	}
+	if sf[0].Record != "001XX000003DHPhYAO" || sf[0].Fields["object"] != "Account" {
+		t.Errorf("link = %+v, want record 001XX000003DHPhYAO object Account", sf[0])
+	}
+}
+
+// A bare Case-prefixed id (500...) is recognised as Salesforce; the old regex
+// only matched 00-prefixed ids.
+func TestExtractSalesforceBareCaseID(t *testing.T) {
+	task := sources.Task{ID: "sf2", Title: "record 500XX000001AbcdEAG here"}
+	found := false
+	for _, l := range Extract(task) {
+		if l.System == SystemSalesforce && l.Record == "500XX000001AbcdEAG" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("bare 500-prefixed id was not extracted as salesforce")
+	}
+}
+
+// The broadened bare-id regex matches only 15 or 18 char ids on a known prefix.
+// A 40-char git SHA (even one starting 001) and a 12-char short SHA must not be
+// harvested as Salesforce ids; the word boundaries bound the match length.
+func TestExtractSalesforceBareIDBoundaries(t *testing.T) {
+	task := sources.Task{ID: "sf3", Title: "sha 001abc0011223344556677889900112233445566 short 001abc001122"}
+	for _, l := range Extract(task) {
+		if l.System == SystemSalesforce {
+			t.Errorf("harvested a bare salesforce id from a SHA-like token: %q", l.Record)
+		}
+	}
+}
+
 // A jira bare key and an aha idea key are distinguished: aha keys carry -I- and
 // must not be miscategorised as jira.
 func TestExtractAhaNotJira(t *testing.T) {

@@ -11,6 +11,13 @@ var (
 	gmailThread  = regexp.MustCompile(`#[^/]+/([A-Za-z0-9]+)$`)
 	driveFile    = regexp.MustCompile(`/d/([A-Za-z0-9_-]+)`)
 	ahaKey       = regexp.MustCompile(`[A-Z]{3,5}-I-[0-9]+`)
+	sfLightning  = regexp.MustCompile(`/lightning/r/([A-Za-z][A-Za-z0-9_]*)/([0-9A-Za-z]{15,18})`)
+	// sfRecordID anchors the id to the first path segment after the host, the
+	// shape of a classic record URL (instance.salesforce.com/<Id>). Anchoring
+	// keeps it from latching onto a 15-to-18 char run buried elsewhere in the
+	// URL (a frontdoor token, a session parameter), which would mint a bogus
+	// record and cost a wasted query.
+	sfRecordID = regexp.MustCompile(`^https?://[^/]+/([0-9A-Za-z]{15,18})(?:[/?#]|$)`)
 )
 
 // slackTS turns Slack's p-form (p1699999999000100) into a ts
@@ -55,6 +62,20 @@ func parseAha(raw string) (string, map[string]string) {
 		return "", nil
 	}
 	return m, map[string]string{"reference": m}
+}
+
+// parseSalesforce returns the record id from a Salesforce permalink. A Lightning
+// record URL (/lightning/r/<Object>/<Id>/) also yields the object name, which the
+// prober prefers over the id key prefix. A classic record URL (/<Id>) yields the
+// id alone. A URL that is not a record permalink returns an empty record.
+func parseSalesforce(raw string) (string, map[string]string) {
+	if m := sfLightning.FindStringSubmatch(raw); m != nil {
+		return m[2], map[string]string{"object": m[1], "record": m[2]}
+	}
+	if m := sfRecordID.FindStringSubmatch(raw); m != nil {
+		return m[1], map[string]string{"record": m[1]}
+	}
+	return "", nil
 }
 
 // parseDrive returns the Drive file id from a docs or drive permalink.

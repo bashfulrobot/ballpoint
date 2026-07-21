@@ -71,19 +71,31 @@ same thread keys the same way on every run.
 
 ### Probers and unchecked sources
 
-Four systems ship a prober: Slack, Gmail, Aha, and Drive. Slack collapses to one
-history call per channel. Gmail, Aha, and Drive query each linked record by id
-(a thread, an idea, a file) for its absolute last activity time, so a record the
-API cannot confirm renders `unchecked` rather than a false unchanged. The
-per-system fan-out is capped, and references past the cap render `too many
+Five systems ship a prober: Slack, Gmail, Aha, Drive, and Salesforce. Slack
+collapses to one history call per channel. Gmail, Aha, and Drive query each linked
+record by id (a thread, an idea, a file) for its absolute last activity time, so a
+record the API cannot confirm renders `unchecked` rather than a false unchanged.
+The per-system fan-out is capped, and references past the cap render `too many
 references to probe this run`, so a task stuffed with links cannot amplify into
 an unbounded number of requests.
 
+Salesforce is the one prober that does not talk HTTP. It reuses the already
+authenticated `sf` CLI (`sf data query ... --json`), so the auth story stays out
+of ballpoint entirely, there is no `salesforce_token` key, and nothing here reads
+a Salesforce credential. Records are grouped by sObject, one query runs per group,
+and each record's `LastModifiedDate` is its last activity time. The sObject comes
+from the id's 3-char key prefix when that prefix is a known standard object, so a
+Lightning URL cannot redirect a real id to a different object; the URL's object
+segment is the fallback, for a custom object or a standard object outside the
+prefix map. An all-digit reference queries `Case` by `CaseNumber`. An unmapped
+prefix with no object hint, a missing or unauthenticated CLI, a non-zero `sf`
+status, or a query error renders the affected links `unchecked`, never a false
+unchanged.
+
 Everything else renders `unchecked` with a reason rather than a freshness
-verdict. Teams is `not probeable`. Jira, Salesforce, and GitHub have `no probe
-available` in this release (Salesforce is tracked separately as #10). A source
-whose credential is missing or whose token expired is `credentials missing or
-expired`.
+verdict. Teams is `not probeable`. Jira and GitHub have `no probe available` in
+this release. A source whose credential is missing or whose token expired is
+`credentials missing or expired`.
 
 The unchecked invariant is what the engine guarantees. A prober that errors,
 times out, has no registration, or omits a link it was asked about makes every
@@ -140,6 +152,11 @@ The probe reads one more flat key per source it can check: `slack_token`,
 is loaded the same way, at runtime, never from the environment or the store,
 and never logged. A missing key is not fatal. That source's links render
 `unchecked` for the run instead of failing it.
+
+Salesforce is the exception to the per-source token pattern. Its auth lives in
+the `sf` CLI's own store, not this secrets file, so there is no `salesforce_token`
+key. The prober is registered when the `sf` binary is on PATH; when it is absent,
+Salesforce links render `unchecked` like any other unregistered source.
 
 ## Benchmark
 

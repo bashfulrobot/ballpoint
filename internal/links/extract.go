@@ -10,7 +10,7 @@ import (
 var (
 	urlRe  = regexp.MustCompile(`https?://[^\s)<>"']+`)
 	jiraRe = regexp.MustCompile(`\b[A-Z]{2,6}-[0-9]+\b`)
-	sfidRe = regexp.MustCompile(`\b00[0-9A-Za-z]{13}([0-9A-Za-z]{3})?\b`)
+	sfidRe = regexp.MustCompile(`\b(?:001|003|005|006|00Q|500|701|800)[0-9A-Za-z]{12}(?:[0-9A-Za-z]{3})?\b`)
 	caseRe = regexp.MustCompile(`\bCase [0-9]{5,}\b`)
 )
 
@@ -94,6 +94,9 @@ func categoriseURL(raw string) Link {
 		return Link{System: SystemJira, Raw: raw}
 	case strings.Contains(host, "confluence"):
 		return Link{System: SystemConfluence, Raw: raw}
+	case strings.Contains(host, "force.com"), strings.Contains(host, "salesforce.com"):
+		rec, f := parseSalesforce(raw)
+		return Link{System: SystemSalesforce, Raw: raw, Record: rec, Fields: f}
 	case strings.Contains(host, "github.com"):
 		return Link{System: SystemGitHub, Raw: raw}
 	case strings.Contains(host, "zoom.us"):
