@@ -33,15 +33,25 @@ func (m Macro) Exec(v Verb, ref string, args []string) error {
 	if v.Script == "" {
 		return fmt.Errorf("verb %q has no macro script", v.Name)
 	}
-	name := filepath.Join(m.Dir, v.Script)
-	full := append([]string{ref}, args...)
-	out, err := m.Run(name, full...)
+	return m.ExecArgv(v.Name, v.Script, append([]string{ref}, args...))
+}
+
+// ExecArgv runs a script with a fully-built argv, no ref-prepending. It exists
+// because not every macro is ref-first (td_merge.sh uses --survivor/--loser),
+// so BuildArgv owns the whole argv and this just runs it. label names the verb
+// in any error, so the status line reads "merge: ..." not "td_merge.sh: ...".
+func (m Macro) ExecArgv(label, script string, argv []string) error {
+	if script == "" {
+		return fmt.Errorf("verb %q has no macro script", label)
+	}
+	name := filepath.Join(m.Dir, script)
+	out, err := m.Run(name, argv...)
 	if err != nil {
 		trimmed := strings.TrimSpace(string(out))
 		if trimmed != "" {
-			return fmt.Errorf("%s: %w: %s", v.Name, err, trimmed)
+			return fmt.Errorf("%s: %w: %s", label, err, trimmed)
 		}
-		return fmt.Errorf("%s: %w", v.Name, err)
+		return fmt.Errorf("%s: %w", label, err)
 	}
 	return nil
 }
