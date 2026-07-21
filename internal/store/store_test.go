@@ -6,8 +6,65 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bashfulrobot/ballpoint/internal/probe"
 	"github.com/bashfulrobot/ballpoint/internal/sources"
 )
+
+func TestLoadAllTasks(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"1", "2", "3"} {
+		if err := s.SaveTask(sources.Task{ID: id, Title: "t" + id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.LoadAllTasks()
+	if err != nil {
+		t.Fatalf("LoadAllTasks() error = %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("LoadAllTasks() returned %d tasks, want 3", len(got))
+	}
+}
+
+func TestLoadAllTasksEmpty(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LoadAllTasks()
+	if err != nil {
+		t.Fatalf("LoadAllTasks() on empty cache error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("LoadAllTasks() = %d, want 0 on empty cache", len(got))
+	}
+}
+
+func TestReportRoundTrip(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.LoadReport(); ok {
+		t.Fatal("LoadReport() reported present on empty cache")
+	}
+	want := probe.Report{Tasks: map[string]probe.TaskReport{
+		"1": {Title: "t1", Links: []probe.LinkFreshness{{Key: "slack:c:1", System: "slack", Changed: true}}},
+	}}
+	if err := s.SaveReport(want); err != nil {
+		t.Fatalf("SaveReport() error = %v", err)
+	}
+	got, ok, err := s.LoadReport()
+	if err != nil || !ok {
+		t.Fatalf("LoadReport() ok=%v err=%v", ok, err)
+	}
+	if !got.Tasks["1"].Links[0].Changed {
+		t.Errorf("LoadReport() lost the Changed flag: %+v", got)
+	}
+}
 
 func TestWatermarkRoundTrip(t *testing.T) {
 	s, err := Open(t.TempDir())
