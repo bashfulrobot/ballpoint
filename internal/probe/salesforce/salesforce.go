@@ -124,7 +124,7 @@ func (c *Client) Probe(ctx context.Context, ls []links.Link, _ sources.Watermark
 	out := make(map[string]probe.Result, len(ls))
 
 	idsByObject := map[string][]links.Link{} // object -> id links
-	var caseNumbers []links.Link              // all-digit Case numbers
+	var caseNumbers []links.Link             // all-digit Case numbers
 
 	for _, l := range ls {
 		rec := l.Record
