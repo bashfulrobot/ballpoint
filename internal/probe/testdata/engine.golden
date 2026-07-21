@@ -1,0 +1,23 @@
+{
+  "tasks": {
+    "8899": {
+      "title": "Follow up https://kong.slack.com/archives/C1/p1699999999000100",
+      "has_work_log": true,
+      "last_logged": "2026-07-18T14:00:00Z",
+      "links": [
+        {
+          "key": "slack:C1:1699999999.000100",
+          "system": "slack",
+          "raw": "https://kong.slack.com/archives/C1/p1699999999000100",
+          "last_activity": "2026-07-20T09:00:00Z",
+          "changed": true
+        }
+      ]
+    },
+    "9001": {
+      "title": "Draft the brief",
+      "has_work_log": false,
+      "links": null
+    }
+  }
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "System": "slack",
+    "Raw": "https://kong.slack.com/archives/C1/p1699999999000100",
+    "Record": "C1:1699999999.000100",
+    "Fields": {
+      "channel": "C1",
+      "thread": "1699999999.000100"
+    }
+  },
+  {
+    "System": "gdrive",
+    "Raw": "https://docs.google.com/document/d/1AbC_dEF/edit",
+    "Record": "1AbC_dEF",
+    "Fields": {
+      "file": "1AbC_dEF"
+    }
+  },
+  {
+    "System": "gmail",
+    "Raw": "https://mail.google.com/mail/u/0/#inbox/FMfcgzGabc123",
+    "Record": "FMfcgzGabc123",
+    "Fields": {
+      "thread": "FMfcgzGabc123"
+    }
+  },
+  {
+    "System": "teams",
+    "Raw": "https://teams.microsoft.com/l/message/19:abc",
+    "Record": "",
+    "Fields": null
+  },
+  {
+    "System": "aha",
+    "Raw": "GTWY-I-1484",
+    "Record": "GTWY-I-1484",
+    "Fields": {
+      "reference": "GTWY-I-1484"
+    }
+  },
+  {
+    "System": "jira",
+    "Raw": "PLAT-42",
+    "Record": "PLAT-42",
+    "Fields": null
+  }
+]
