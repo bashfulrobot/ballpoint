@@ -84,10 +84,13 @@ authenticated `sf` CLI (`sf data query ... --json`), so the auth story stays out
 of ballpoint entirely, there is no `salesforce_token` key, and nothing here reads
 a Salesforce credential. Records are grouped by sObject, one query runs per group,
 and each record's `LastModifiedDate` is its last activity time. The sObject comes
-from a Lightning URL's object segment when present, otherwise from the id's 3-char
-key prefix; an all-digit reference queries `Case` by `CaseNumber`. An unmapped
-prefix, a missing or unauthenticated CLI, a non-zero `sf` status, or a query error
-renders the affected links `unchecked`, never a false unchanged.
+from the id's 3-char key prefix when that prefix is a known standard object, so a
+Lightning URL cannot redirect a real id to a different object; the URL's object
+segment is the fallback, for a custom object or a standard object outside the
+prefix map. An all-digit reference queries `Case` by `CaseNumber`. An unmapped
+prefix with no object hint, a missing or unauthenticated CLI, a non-zero `sf`
+status, or a query error renders the affected links `unchecked`, never a false
+unchanged.
 
 Everything else renders `unchecked` with a reason rather than a freshness
 verdict. Teams is `not probeable`. Jira and GitHub have `no probe available` in
