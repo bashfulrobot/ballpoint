@@ -8,13 +8,13 @@ keeps long jobs from blocking the walk.
 
 ## Status
 
-The data layer is built. The subcommands that consume it are still wired to
-return `not implemented`.
+The data layer and the freshness probe are built. The remaining subcommands
+are still wired to return `not implemented`.
 
 | Component | Issue | State |
 | --- | --- | --- |
 | Source interface and Todoist HTTP client | #2 | Done |
-| Freshness probe engine | #3 | Wired, not implemented |
+| Freshness probe engine | #3 | Done |
 | Prewarm timer as a home-manager module | #4 | Wired, not implemented |
 | Triage walk TUI | #5 | Wired, not implemented |
 | Dispatcher | #6 | Wired, not implemented |
@@ -22,14 +22,14 @@ return `not implemented`.
 ## Usage
 
 ```
-ballpoint                     walk the triage queue
-ballpoint probe [--benchmark] refresh freshness data
-ballpoint dispatch            run queued work
-ballpoint --version           print the build version
+ballpoint                                  walk the triage queue
+ballpoint probe [--dry-run] [--benchmark]  refresh freshness data
+ballpoint dispatch                         run queued work
+ballpoint --version                        print the build version
 ```
 
-Unimplemented subcommands exit non-zero, so the systemd timer in issue #4
-cannot record success for work that never ran.
+The still-unimplemented subcommands exit non-zero, so the systemd timer in
+issue #4 cannot record success for work that never ran.
 
 ## Sources
 
@@ -53,6 +53,68 @@ last fetched task per file in `cache/<taskID>.json`, keyed by task. Every write
 lands through a temp file and a rename, so a killed timer never leaves a torn
 file. Both live under the state directory described below.
 
+## Probe
+
+`ballpoint probe` answers one question per task: what changed at each linked
+system since the last logged work-log entry. It pulls every external reference
+out of a task's title and comments, groups those references by system, and runs
+one prober per system. The output is JSON keyed by task on stdout, each link
+carrying its last activity time and a `changed` flag, or `unchecked` with a
+reason.
+
+Reference extraction lives in `internal/links`. It harvests URLs and bare
+identifiers, sorts each by host or pattern, and parses a stable record identity
+per system: a Slack permalink becomes `slack:<channel>:<ts>` (a reply
+permalink's `thread_ts` folds it onto its parent thread), a Gmail thread id, an
+Aha reference key, a Drive file id. That record is the watermark key, so the
+same thread keys the same way on every run.
+
+### Probers and unchecked sources
+
+Four systems ship a prober: Slack, Gmail, Aha, and Drive. Everything else
+renders `unchecked` with a reason rather than a freshness verdict. Teams is
+`not probeable`. Jira, Salesforce, and GitHub have `no probe available` in this
+release. A source whose credential is missing or whose token expired is
+`credentials missing or expired`.
+
+The unchecked invariant is what the engine guarantees. A prober that errors,
+times out, has no registration, or omits a link it was asked about makes every
+affected link `unchecked`, never `changed=false`, and never advances that
+link's watermark. A silent false negative on freshness is worse than no probe,
+so the engine never manufactures a no-change.
+
+### The Slack collapse
+
+Slack is the load-bearing case. One `conversations.history` call per distinct
+channel reads each thread's `latest_reply`, and only a thread whose
+`latest_reply` moved past the stored watermark costs a `conversations.replies`
+call. A batch that mentions 129 Slack threads spread over 40 channels reads 40
+history calls plus one reply call per advanced thread, so a warm run is far
+cheaper than a cold one. The limiter is sized to Slack's Tier 3 ceiling of
+roughly 50 requests per minute.
+
+### Reproducible call-count figure
+
+`TestBatchBySystemCollapsesCalls` drives the engine against counting probers
+over a synthetic corpus modelled on the real one: 71 tasks, 148 links, Slack
+spread over 40 channels. Batch-by-system issues 3 prober invocations, one per
+system, not 148. That proves the collapse with no token and no network.
+
+### Live commands
+
+The live figure needs the real tokens, the network, and the user's own scope,
+which an autonomous run and CI cannot supply and must never read.
+
+```
+ballpoint probe              # one real pass, JSON report to stdout
+ballpoint probe --dry-run    # planned per-system calls, no prober call, no watermark write
+ballpoint probe --benchmark  # time the real pass and print the wall clock
+```
+
+`--dry-run` still fetches the task list (the input corpus) but makes no prober
+call and writes no watermark, so it reports the batch-by-system plan with no
+side effects.
+
 ## Secrets
 
 The Todoist token is read at runtime from the off-store secrets file at
@@ -64,6 +126,12 @@ user services do not inherit session variables. The pattern follows
 its token from the same file inside the script for the same reason.
 `internal/secrets` is the loader; the value is returned to the caller and never
 logged, and no error message includes it.
+
+The probe reads one more flat key per source it can check: `slack_token`,
+`aha_token`, and `google_token` (shared by the Gmail and Drive probers). Each
+is loaded the same way, at runtime, never from the environment or the store,
+and never logged. A missing key is not fatal. That source's links render
+`unchecked` for the run instead of failing it.
 
 ## Benchmark
 
@@ -79,10 +147,9 @@ representative local run: sequential 781 ms, 12 way 100 ms, a 7.8x speedup.
 This measures the mechanism against a mock, not the live API.
 
 The live figure needs the real token, the network, and the user's own scope,
-which an autonomous run and CI cannot supply and must never read. Issue #3
-wires the prefetch behind `ballpoint probe --benchmark`, which loads the token
-the normal way, runs one real prefetch, and prints the wall clock against the
-15.3 s baseline. The flag parses today; the prefetch behind it lands with #3.
+which an autonomous run and CI cannot supply and must never read. `ballpoint
+probe --benchmark` loads the token the normal way, runs one real pass, and
+prints the wall clock against the 15.3 s baseline.
 
 ## Development
 
