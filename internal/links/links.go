@@ -5,6 +5,7 @@ package links
 // System is the canonical name of an external system.
 type System string
 
+// The systems ballpoint recognises in a task's references.
 const (
 	SystemSlack      System = "slack"
 	SystemTeams      System = "teams"
