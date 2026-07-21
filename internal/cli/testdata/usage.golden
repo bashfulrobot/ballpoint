@@ -1,9 +1,9 @@
 ballpoint drives Todoist triage.
 
 Usage:
-  ballpoint            walk the triage queue
-  ballpoint probe      refresh freshness data
-  ballpoint dispatch   run queued work
+  ballpoint                     walk the triage queue
+  ballpoint probe [--benchmark] refresh freshness data
+  ballpoint dispatch            run queued work
 
 Flags:
   --version   print the build version and exit
