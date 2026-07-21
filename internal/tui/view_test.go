@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/bashfulrobot/ballpoint/internal/sources"
 )
 
 func TestSanitizeTerminalStripsEscapes(t *testing.T) {
@@ -26,6 +28,29 @@ func TestSanitizeTerminalDropsC1(t *testing.T) {
 	in := string([]rune{'a', 0x9b, 'b'})
 	if got := sanitizeTerminal(in); got != "ab" {
 		t.Errorf("sanitizeTerminal(C1) = %q, want ab", got)
+	}
+}
+
+func TestSanitizeLineCollapsesNewlines(t *testing.T) {
+	got := sanitizeLine("Ship it\n\n\n [y/n] approve?")
+	if strings.ContainsRune(got, '\n') || strings.ContainsRune(got, '\t') {
+		t.Errorf("sanitizeLine kept a newline or tab: %q", got)
+	}
+	if !strings.Contains(got, "Ship it") || !strings.Contains(got, "approve?") {
+		t.Errorf("sanitizeLine dropped printable text: %q", got)
+	}
+}
+
+func TestWorkLogMarkdownSanitizesBody(t *testing.T) {
+	c := Card{Task: sources.Task{
+		Description: "desc \x1b]0;pwned\x07 body",
+		Comments: []sources.Comment{
+			{Content: "log \x1b]52;c;AAAA\x07 entry", Attachment: "file\x1b]0;x\x07.pdf"},
+		},
+	}}
+	md := workLogMarkdown(c)
+	if strings.ContainsRune(md, 0x1b) || strings.ContainsRune(md, 0x07) {
+		t.Fatalf("workLogMarkdown left control bytes in the body: %q", md)
 	}
 }
 

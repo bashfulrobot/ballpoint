@@ -56,11 +56,12 @@ func (m *Model) renderCard() {
 }
 
 // workLogMarkdown builds the Markdown document for a card: the description plus
-// each work-log comment with its time and any attachment. The comments are the
-// work log (see td_worklog.sh), so they render verbatim through glamour.
+// each work-log comment with its time and any attachment. Description, comment
+// content, and attachment names are collaborator-controlled, and glamour does
+// not strip control bytes, so each is sanitized before it enters the markdown.
 func workLogMarkdown(c Card) string {
 	var b strings.Builder
-	if d := strings.TrimSpace(c.Task.Description); d != "" {
+	if d := sanitizeTerminal(strings.TrimSpace(c.Task.Description)); d != "" {
 		b.WriteString(d)
 		b.WriteString("\n\n")
 	}
@@ -76,10 +77,10 @@ func workLogMarkdown(c Card) string {
 		b.WriteString(cm.PostedAt.Format("2006-01-02 15:04"))
 		if cm.Attachment != "" {
 			b.WriteString(" · ")
-			b.WriteString(cm.Attachment)
+			b.WriteString(sanitizeLine(cm.Attachment))
 		}
 		b.WriteString("\n\n")
-		b.WriteString(strings.TrimSpace(cm.Content))
+		b.WriteString(sanitizeTerminal(strings.TrimSpace(cm.Content)))
 		b.WriteString("\n\n")
 	}
 	return b.String()
@@ -124,23 +125,23 @@ func (m Model) headerView() string {
 		return headerStyle.Render("No tasks in scope")
 	}
 	t := c.Task
-	// Title, project, section, and due are collaborator-controllable and do not
-	// pass through glamour (only the body does), so sanitize them before they
-	// reach the terminal to strip escape sequences.
-	title := headerStyle.Render(sanitizeTerminal(t.Title))
+	// Title, project, section, and due are collaborator-controllable and render
+	// on single lines, so sanitizeLine strips escape sequences and collapses any
+	// embedded newline that would otherwise inject extra header lines.
+	title := headerStyle.Render(sanitizeLine(t.Title))
 	meta := []string{}
 	if t.Project != "" {
-		loc := sanitizeTerminal(t.Project)
+		loc := sanitizeLine(t.Project)
 		if t.Section != "" {
-			loc += " / " + sanitizeTerminal(t.Section)
+			loc += " / " + sanitizeLine(t.Section)
 		}
 		meta = append(meta, loc)
 	}
 	if t.Priority != "" {
-		meta = append(meta, sanitizeTerminal(t.Priority))
+		meta = append(meta, sanitizeLine(t.Priority))
 	}
 	if t.Due != "" {
-		meta = append(meta, "due "+sanitizeTerminal(t.Due))
+		meta = append(meta, "due "+sanitizeLine(t.Due))
 	}
 	pos := fmt.Sprintf("[%d/%d]", m.cursor+1, len(m.cards))
 	line2 := dimStyle.Render(strings.Join(meta, "  ·  "))
@@ -148,14 +149,28 @@ func (m Model) headerView() string {
 }
 
 // sanitizeTerminal drops control bytes that could carry ANSI or OSC escape
-// sequences from collaborator-controlled text or script output, keeping only
-// tab and newline. It neutralizes cursor manipulation, title rewriting, and OSC
+// sequences from collaborator-controlled text, keeping tab and newline. Use it
+// for multi-line body text (fed to glamour, which does not strip control bytes
+// of its own). It neutralizes cursor manipulation, title rewriting, and OSC
 // hyperlink or clipboard tricks in text the operator did not author.
-func sanitizeTerminal(s string) string {
+func sanitizeTerminal(s string) string { return stripControl(s, true) }
+
+// sanitizeLine is sanitizeTerminal for single-line contexts (the header fields
+// and the status line). It also collapses tab and newline to a space, so a title
+// carrying newlines cannot inject extra lines and spoof the fixed-height header.
+func sanitizeLine(s string) string { return stripControl(s, false) }
+
+// stripControl removes C0/C1 control bytes and DEL. When keepWhitespace is true
+// tab and newline pass through (body text); otherwise they collapse to a space
+// (single-line fields).
+func stripControl(s string, keepWhitespace bool) string {
 	return strings.Map(func(r rune) rune {
 		switch {
 		case r == '\t' || r == '\n':
-			return r
+			if keepWhitespace {
+				return r
+			}
+			return ' '
 		case r < 0x20 || r == 0x7f:
 			return -1
 		case r >= 0x80 && r <= 0x9f:
@@ -179,7 +194,7 @@ func (m Model) footerView() string {
 	}
 	switch {
 	case m.confirming:
-		fmt.Fprintf(&b, "%s %q? [y/n]", m.confirmVerb.Name, sanitizeTerminal(m.confirmArg))
+		fmt.Fprintf(&b, "%s %q? [y/n]", m.confirmVerb.Name, sanitizeLine(m.confirmArg))
 	case m.prompting:
 		b.WriteString(m.prompt.View())
 	default:
@@ -187,9 +202,9 @@ func (m Model) footerView() string {
 	}
 	if m.status != "" {
 		// The status line can carry a macro script's raw output, which may echo
-		// collaborator-controlled task content, so sanitize it too.
+		// collaborator-controlled task content, so sanitize it as a single line.
 		b.WriteString("\n")
-		b.WriteString(statusStyle.Render(sanitizeTerminal(m.status)))
+		b.WriteString(statusStyle.Render(sanitizeLine(m.status)))
 	}
 	return b.String()
 }
