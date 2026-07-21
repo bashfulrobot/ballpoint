@@ -1,0 +1,82 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A superseded PR run has nothing left to say, so cancel it rather than paying
+# for a second full Nix build. Pushes to main are never cancelled: two commits
+# landing close together would otherwise leave the first with no completed run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Third-party actions are pinned to a full commit SHA, not a tag. A tag
+      # is mutable, so a compromised upstream account could repoint it at
+      # malicious code that runs on every push to main. A SHA cannot be moved.
+      # Bump these deliberately (Dependabot or Renovate keep the version
+      # comment honest).
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Backs onto the GitHub Actions cache, so it needs no repo secret. Keeps
+      # the Go dependency closure from rebuilding on every run. The cache key
+      # is the exact hash of flake.lock and go.sum with no loose restore
+      # fallback, so a lockfile change forces a clean rebuild rather than
+      # reusing a broadly matched entry.
+      - name: Cache the Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'go.sum') }}
+
+      - name: Build
+        run: nix build --print-build-logs
+
+      - name: Flake check
+        run: nix flake check --print-build-logs
+
+      - name: Test
+        run: nix develop --command go test ./...
+
+      # internal/tools/tools.go holds the dependency pins and is the only file
+      # behind this tag. Without an explicit build it is never type-checked.
+      - name: Build the tools tag
+        run: nix develop --command go build -tags tools ./...
+
+      - name: Lint
+        run: nix develop --command golangci-lint run
+
+      # The pin strategy rests on tidy being a no-op. Assert it rather than
+      # trusting it, so go.mod cannot drift into a confusing vendorHash
+      # mismatch in a later issue.
+      - name: Check go.mod is tidy
+        run: |
+          nix develop --command go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      # Go ignores -X against a symbol that does not exist, so a typo in the
+      # ldflags path leaves the debug.ReadBuildInfo fallback in place. Compare
+      # against the version the flake declares; testing for "not dev" passes
+      # against the "(devel)" a broken build actually reports.
+      - name: Verify the version stamp
+        run: |
+          expected="$(nix eval --raw .#packages.x86_64-linux.default.version)"
+          actual="$(./result/bin/ballpoint --version)"
+          echo "flake declares: ${expected}"
+          echo "binary reports: ${actual}"
+          test "${actual}" = "${expected}"
