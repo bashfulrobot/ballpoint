@@ -105,6 +105,32 @@ func TestRunUnknownCommand(t *testing.T) {
 	}
 }
 
+// probe --benchmark is still not implemented, but it must parse as a known
+// flag rather than an unknown-argument error, so the documented live command
+// is real.
+func TestRunProbeBenchmarkParses(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	err := Run([]string{"probe", "--benchmark"}, &stdout, &stderr)
+
+	if !errors.Is(err, ErrNotImplemented) {
+		t.Errorf("Run(probe --benchmark) error = %v, want ErrNotImplemented", err)
+	}
+}
+
+// probe --help prints the probe FlagSet usage and returns nil. The per-verb
+// FlagSet made this a real help request rather than a stray argument, so pin
+// the behaviour.
+func TestRunProbeHelp(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	err := Run([]string{"probe", "--help"}, &stdout, &stderr)
+
+	if err != nil {
+		t.Errorf("Run(probe --help) error = %v, want nil", err)
+	}
+}
+
 func TestRunVersion(t *testing.T) {
 	original := buildinfo.Version
 	t.Cleanup(func() { buildinfo.Version = original })

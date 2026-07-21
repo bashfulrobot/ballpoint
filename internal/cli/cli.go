@@ -18,9 +18,9 @@ var ErrNotImplemented = errors.New("not implemented")
 const usage = `ballpoint drives Todoist triage.
 
 Usage:
-  ballpoint            walk the triage queue
-  ballpoint probe      refresh freshness data
-  ballpoint dispatch   run queued work
+  ballpoint                     walk the triage queue
+  ballpoint probe [--benchmark] refresh freshness data
+  ballpoint dispatch            run queued work
 
 Flags:
   --version   print the build version and exit
@@ -78,32 +78,49 @@ func Run(args []string, stdout, stderr io.Writer) error {
 
 	cmd := fs.Arg(0)
 
-	// An unknown verb is the error worth reporting, so check it before the
-	// stray-argument guard. Otherwise a mistyped verb with a trailing token
-	// would be told it "takes no arguments", implying the verb exists.
+	// Each verb owns its argument handling. flag stops parsing at the first
+	// positional, so a flag written after the verb never reaches the top-level
+	// FlagSet. The verbs that take no flags reject any trailing token so a typo
+	// in issue #4's systemd unit fails loudly. probe is the first verb that
+	// carries a flag, so it parses its own FlagSet.
 	switch cmd {
-	case "", "probe", "dispatch":
+	case "":
+		if len(rest) > 1 {
+			return fmt.Errorf("%s takes no arguments, got %q", displayName(cmd), rest[1:])
+		}
+
+		return fmt.Errorf("triage walk: %w", ErrNotImplemented)
+	case "probe":
+		pf := flag.NewFlagSet("probe", flag.ContinueOnError)
+		pf.SetOutput(stderr)
+		// Registered so the documented live command parses as a real flag.
+		// Issue #3 wires the prefetch behind it.
+		pf.Bool("benchmark", false, "time a full prefetch against the live API and print the wall clock")
+
+		if err := pf.Parse(rest[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil
+			}
+
+			return err
+		}
+
+		if pf.NArg() > 0 {
+			return fmt.Errorf("probe takes no positional arguments, got %q", pf.Args())
+		}
+
+		return fmt.Errorf("probe: %w", ErrNotImplemented)
+	case "dispatch":
+		if len(rest) > 1 {
+			return fmt.Errorf("dispatch takes no arguments, got %q", rest[1:])
+		}
+
+		return fmt.Errorf("dispatch: %w", ErrNotImplemented)
 	default:
 		// A failed usage write is deliberately not allowed to mask the real
 		// error.
 		_, _ = fmt.Fprint(stderr, usage)
 
 		return fmt.Errorf("unknown command %q", cmd)
-	}
-
-	// flag stops parsing at the first positional, so a flag or argument
-	// written after the verb never reaches this FlagSet and would otherwise be
-	// dropped in silence. Reject the extras. This covers the bare walk too
-	// (cmd is the empty string), so a stray token there does not vanish.
-	// Per-verb FlagSets arrive with the first verb that actually takes flags.
-	if len(rest) > 1 {
-		return fmt.Errorf("%s takes no arguments, got %q", displayName(cmd), rest[1:])
-	}
-
-	switch cmd {
-	case "":
-		return fmt.Errorf("triage walk: %w", ErrNotImplemented)
-	default:
-		return fmt.Errorf("%s: %w", cmd, ErrNotImplemented)
 	}
 }
