@@ -91,14 +91,18 @@ in
           bound, an on-failure restart every restartSec turns a permanent
           failure (a missing secrets file, a bad token) into a loop that never
           gives up. The timer still re-fires on onCalendar and onStartupSec, so
-          the restart only has to cover a transient boot race.
+          the restart only has to cover a transient boot race. Setting this to
+          "0" disables the bound, so the service would retry forever.
         '';
       };
 
       startLimitBurst = lib.mkOption {
         type = lib.types.ints.unsigned;
         default = 5;
-        description = "Restarts allowed within startLimitIntervalSec before systemd stops retrying and lets the unit fail.";
+        description = ''
+          Restarts allowed within startLimitIntervalSec before systemd stops
+          retrying and lets the unit fail. Zero disables the bound.
+        '';
       };
 
       concurrency = lib.mkOption {

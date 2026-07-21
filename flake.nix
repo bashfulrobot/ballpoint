@@ -92,6 +92,7 @@
                     programs.ballpoint.prewarm.concurrency = 6;
                     programs.ballpoint.prewarm.secretsPath = "/tmp/x.json";
                     programs.ballpoint.prewarm.startLimitBurst = 3;
+                    programs.ballpoint.prewarm.startLimitIntervalSec = "30min";
                   }
                 ];
               };
@@ -127,7 +128,7 @@
 
               # The on-failure restart is bounded, so a permanent failure stops looping.
               test "${toString service.Unit.StartLimitBurst}" = "3"
-              test -n "${service.Unit.StartLimitIntervalSec}"
+              test "${service.Unit.StartLimitIntervalSec}" = "30min"
 
               # Timer: calendar plus boot, catches up missed runs, wanted by timers.target.
               test "${timer.Timer.OnCalendar}" = "Mon 09:00"

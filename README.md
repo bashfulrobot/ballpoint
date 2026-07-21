@@ -262,7 +262,7 @@ programs.ballpoint = {
   prewarm = {
     enable = true;
     onCalendar = "Mon..Fri 08,12,16:00";   # a few times across the working day
-    concurrency = 8;                         # optional, 0 keeps the default of 12
+    concurrency = 8;                         # optional, 0 keeps the built-in default
     # secretsPath = "/home/you/.config/nixos-secrets/secrets.json";  # optional override
   };
 };
