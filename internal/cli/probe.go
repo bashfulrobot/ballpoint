@@ -92,12 +92,24 @@ func runProbe(deps probeDeps, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	// Persist the corpus so the TUI (issue #5) walks it offline. A single task
+	// that fails to cache is not fatal; the walk simply skips a missing card.
+	for _, task := range deps.tasks {
+		if err := st.SaveTask(task); err != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: caching task %s: %v\n", task.ID, err)
+		}
+	}
+
 	start := time.Now()
 	report, next, err := probe.Run(context.Background(), deps.tasks, since, probeset.Build(deps.creds))
 	if err != nil {
 		return err
 	}
 	if err := st.SaveWatermark(next); err != nil {
+		return err
+	}
+	// The report is the freshness overlay the TUI reads per card.
+	if err := st.SaveReport(report); err != nil {
 		return err
 	}
 

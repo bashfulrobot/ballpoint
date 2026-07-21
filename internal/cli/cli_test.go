@@ -9,6 +9,7 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/buildinfo"
 	"github.com/bashfulrobot/ballpoint/internal/golden"
 	"github.com/bashfulrobot/ballpoint/internal/sources"
+	"github.com/bashfulrobot/ballpoint/internal/store"
 )
 
 // Every wired but unbuilt subcommand must report ErrNotImplemented so main
@@ -153,6 +154,28 @@ func TestSecretsPathOrDefault(t *testing.T) {
 	}
 	if got == "" || !strings.HasSuffix(got, "nixos-secrets/secrets.json") {
 		t.Errorf("secretsPathOrDefault(empty) = %q, want the off-store default", got)
+	}
+}
+
+// A real (non-dry-run) probe persists the task corpus and the freshness report
+// to the cache, so the TUI (issue #5) can walk them offline.
+func TestRunProbePersistsCorpus(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	tasks := []sources.Task{{ID: "1", Title: "one"}, {ID: "2", Title: "two"}}
+	if err := runProbe(probeDeps{tasks: tasks, stateDir: dir}, &stdout, &stderr); err != nil {
+		t.Fatalf("runProbe() error = %v", err)
+	}
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.LoadAllTasks()
+	if err != nil || len(got) != 2 {
+		t.Fatalf("LoadAllTasks() = %d tasks, err=%v, want 2", len(got), err)
+	}
+	if _, ok, _ := st.LoadReport(); !ok {
+		t.Error("probe did not persist a report")
 	}
 }
 
