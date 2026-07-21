@@ -195,6 +195,18 @@ func TestModelDraftEmptyRecipientRejected(t *testing.T) {
 	}
 }
 
+func TestModelDraftEmptyBodyRejected(t *testing.T) {
+	root := t.TempDir()
+	m, _ := newTestModelAt(t, root, 1)
+	out, _ := m.Update(key('r'))
+	out, _ = out.(Model).Update(typeInto("nudge #team"))
+	out.(Model).Update(enter())
+	entries, _ := queue.Load(root)
+	if len(entries) != 0 {
+		t.Errorf("channel and recipient but no body queued %d entries, want 0", len(entries))
+	}
+}
+
 func TestModelConfirmEscCancels(t *testing.T) {
 	m, rec := newTestModel(t, 1)
 	out, _ := m.Update(key('D'))

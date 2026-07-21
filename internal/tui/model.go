@@ -298,8 +298,8 @@ func (m Model) queueOutward(v Verb, arg string) (tea.Model, tea.Cmd) {
 	if len(fields) >= 3 {
 		body = strings.Join(fields[2:], " ")
 	}
-	if to == "" {
-		m.status = fmt.Sprintf("draft %s needs a recipient: draft %s <to> <text>", v.Name, v.Name)
+	if to == "" || body == "" {
+		m.status = fmt.Sprintf("draft %s needs a recipient and a message: draft %s <to> <text>", v.Name, v.Name)
 		return m, nil
 	}
 	// time.Now() at append, not m.now (which is the frozen card-age clock), so
