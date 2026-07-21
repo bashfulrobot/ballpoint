@@ -1,9 +1,8 @@
 # Home Manager module for ballpoint.
 #
-# Issue #1 ships the option surface and package wiring only. Issue #4 adds
-# `programs.ballpoint.prewarm` and the systemd user timer inside this same
-# namespace, so a consumer who enables ballpoint now does not have to
-# restructure their configuration when the timer lands.
+# Installs the binary, and under `programs.ballpoint.prewarm` schedules
+# `ballpoint probe` on a systemd user timer so freshness data is warm before a
+# triage session starts.
 { self }:
 
 { config, lib, pkgs, ... }:
@@ -20,6 +19,15 @@ let
       ballpoint provides no package for ${system}.
       Set programs.ballpoint.package to a package you build yourself.
     '');
+
+  # The probe invocation the timer runs. Concurrency and secrets path are passed
+  # only when set, so the binary's own defaults apply otherwise. The secrets path
+  # is a path, never a credential, so nothing secret enters the store.
+  probeArgs = lib.escapeShellArgs (
+    [ "probe" ]
+    ++ lib.optionals (cfg.prewarm.concurrency > 0) [ "--concurrency" (toString cfg.prewarm.concurrency) ]
+    ++ lib.optionals (cfg.prewarm.secretsPath != null) [ "--secrets-path" cfg.prewarm.secretsPath ]
+  );
 in
 {
   options.programs.ballpoint = {
@@ -34,9 +42,82 @@ in
         ballpoint flake, so a consumer does not need to wire the overlay.
       '';
     };
+
+    prewarm = {
+      enable = lib.mkEnableOption "the ballpoint probe prewarm timer";
+
+      onCalendar = lib.mkOption {
+        type = lib.types.str;
+        default = "Mon..Fri 08,12,16:00";
+        description = "systemd OnCalendar schedule for the prewarm run.";
+      };
+
+      onStartupSec = lib.mkOption {
+        type = lib.types.str;
+        default = "3min";
+        description = ''
+          Delay after boot before the first run, long enough that the network is
+          usually up so the common case succeeds without waiting on a retry.
+        '';
+      };
+
+      randomizedDelaySec = lib.mkOption {
+        type = lib.types.str;
+        default = "2min";
+        description = "systemd RandomizedDelaySec, to spread scheduled runs.";
+      };
+
+      restartSec = lib.mkOption {
+        type = lib.types.str;
+        default = "30s";
+        description = "Delay before an on-failure restart, so a boot-time network race retries.";
+      };
+
+      concurrency = lib.mkOption {
+        type = lib.types.ints.unsigned;
+        default = 0;
+        description = "Bounded Todoist fetch concurrency. Zero uses the binary default (12).";
+      };
+
+      secretsPath = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/home/alice/.config/nixos-secrets/secrets.json";
+        description = ''
+          Path to the off-store secrets file. Null uses the binary default,
+          ~/.config/nixos-secrets/secrets.json. The value is a path, never a
+          credential, so nothing secret enters the store.
+        '';
+      };
+    };
   };
 
-  config = lib.mkIf cfg.enable {
-    home.packages = [ cfg.package ];
-  };
+  config = lib.mkIf cfg.enable (lib.mkMerge [
+    { home.packages = [ cfg.package ]; }
+
+    (lib.mkIf cfg.prewarm.enable {
+      systemd.user.services.ballpoint-probe = {
+        Unit.Description = "ballpoint freshness prewarm probe";
+        Service = {
+          Type = "oneshot";
+          ExecStart = "${cfg.package}/bin/ballpoint ${probeArgs}";
+          # A boot-time network race retries rather than failing the day. No
+          # graphical-session binding, so it runs headless under the timer.
+          Restart = "on-failure";
+          RestartSec = cfg.prewarm.restartSec;
+        };
+      };
+
+      systemd.user.timers.ballpoint-probe = {
+        Unit.Description = "Schedule the ballpoint freshness prewarm probe";
+        Timer = {
+          OnCalendar = cfg.prewarm.onCalendar;
+          OnStartupSec = cfg.prewarm.onStartupSec;
+          Persistent = true;
+          RandomizedDelaySec = cfg.prewarm.randomizedDelaySec;
+        };
+        Install.WantedBy = [ "timers.target" ];
+      };
+    })
+  ]);
 }
