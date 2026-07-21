@@ -71,11 +71,19 @@ same thread keys the same way on every run.
 
 ### Probers and unchecked sources
 
-Four systems ship a prober: Slack, Gmail, Aha, and Drive. Everything else
-renders `unchecked` with a reason rather than a freshness verdict. Teams is
-`not probeable`. Jira, Salesforce, and GitHub have `no probe available` in this
-release. A source whose credential is missing or whose token expired is
-`credentials missing or expired`.
+Four systems ship a prober: Slack, Gmail, Aha, and Drive. Slack collapses to one
+history call per channel. Gmail, Aha, and Drive query each linked record by id
+(a thread, an idea, a file) for its absolute last activity time, so a record the
+API cannot confirm renders `unchecked` rather than a false unchanged. The
+per-system fan-out is capped, and references past the cap render `too many
+references to probe this run`, so a task stuffed with links cannot amplify into
+an unbounded number of requests.
+
+Everything else renders `unchecked` with a reason rather than a freshness
+verdict. Teams is `not probeable`. Jira, Salesforce, and GitHub have `no probe
+available` in this release (Salesforce is tracked separately as #10). A source
+whose credential is missing or whose token expired is `credentials missing or
+expired`.
 
 The unchecked invariant is what the engine guarantees. A prober that errors,
 times out, has no registration, or omits a link it was asked about makes every

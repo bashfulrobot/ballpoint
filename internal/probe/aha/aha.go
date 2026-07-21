@@ -1,6 +1,7 @@
-// Package aha probes Aha record freshness. It queries each linked record by its
-// reference key and reports that record's absolute last-updated time, so a
-// record the API cannot confirm renders unchecked rather than a false unchanged.
+// Package aha probes Aha idea freshness. The references extracted from task text
+// are always idea keys (the -I- infix), so it queries each idea by its reference
+// key and reports that idea's absolute last-updated time. An idea the API cannot
+// confirm renders unchecked rather than a false unchanged.
 package aha
 
 import (
@@ -47,16 +48,19 @@ func New(token string, opts ...Option) *Client {
 // System identifies this prober.
 func (c *Client) System() links.System { return links.SystemAha }
 
-// ahaResponse is the subset of a single Aha feature response this prober
-// decodes.
+// ahaResponse is the subset of a single Aha idea response this prober decodes.
 type ahaResponse struct {
-	Feature struct {
+	Idea struct {
 		UpdatedAt string `json:"updated_at"`
-	} `json:"feature"`
+	} `json:"idea"`
 }
 
-// Probe queries each linked record for its last-updated time. Any record it
-// cannot positively confirm renders unchecked, never a false unchanged.
+// Probe queries each linked idea for its last-updated time. Any idea it cannot
+// positively confirm renders unchecked, never a false unchanged. The incoming
+// watermark is unused on purpose: each query returns an absolute time and the
+// engine compares it against the work-log baseline, so the cost is one request
+// per record, bounded by the engine's per-system cap, the run deadline, and this
+// client's rate limiter.
 func (c *Client) Probe(ctx context.Context, ls []links.Link, _ sources.Watermark) (map[string]probe.Result, error) {
 	out := make(map[string]probe.Result, len(ls))
 	for _, l := range ls {
@@ -74,7 +78,7 @@ func (c *Client) probeOne(ctx context.Context, l links.Link) probe.Result {
 		return probe.Result{Unchecked: true, Reason: probe.ReasonFromCtx(ctx)}
 	}
 
-	target := c.baseURL + "/features/" + url.PathEscape(l.Record)
+	target := c.baseURL + "/ideas/" + url.PathEscape(l.Record)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
@@ -98,7 +102,7 @@ func (c *Client) probeOne(ctx context.Context, l links.Link) probe.Result {
 	if err := probe.DecodeJSON(resp.Body, &body); err != nil {
 		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
 	}
-	t, err := time.Parse(time.RFC3339, body.Feature.UpdatedAt)
+	t, err := time.Parse(time.RFC3339, body.Idea.UpdatedAt)
 	if err != nil {
 		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
 	}

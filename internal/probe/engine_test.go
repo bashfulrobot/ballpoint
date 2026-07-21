@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,6 +159,65 @@ func TestRunUncheckedOnOmittedKey(t *testing.T) {
 	if _, ok := next[link.Key]; ok {
 		t.Error("a watermark was written for an omitted (unchecked) key")
 	}
+}
+
+// The per-system fan-out is capped: records beyond the cap render unchecked
+// with ReasonTooMany and never reach the prober, so one task stuffed with
+// references cannot amplify into an unbounded number of outbound requests.
+func TestRunCapsPerSystemFanout(t *testing.T) {
+	var title strings.Builder
+	title.WriteString("bulk ")
+	for i := 0; i < maxLinksPerSystem+5; i++ {
+		fmt.Fprintf(&title, "https://kong.slack.com/archives/C1/p16999999990%05d ", i)
+	}
+	tasks := []sources.Task{{ID: "1", Title: title.String(), UpdatedAt: *tp("2026-07-01T00:00:00Z")}}
+
+	seen := 0
+	var reg Registry
+	reg.Register(funcProber{
+		system: links.SystemSlack,
+		fn: func(ls []links.Link) map[string]Result {
+			seen = len(ls)
+			out := make(map[string]Result, len(ls))
+			now := *tp("2026-07-10T00:00:00Z")
+			for _, l := range ls {
+				la := now
+				out[l.Key()] = Result{LastActivity: &la}
+			}
+			return out
+		},
+	})
+
+	report, _, err := Run(context.Background(), tasks, sources.Watermark{}, &reg)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if seen != maxLinksPerSystem {
+		t.Errorf("prober received %d links, want the cap %d", seen, maxLinksPerSystem)
+	}
+
+	tooMany := 0
+	for _, l := range report.Tasks["1"].Links {
+		if l.Unchecked && l.Reason == ReasonTooMany {
+			tooMany++
+		}
+	}
+	if tooMany != 5 {
+		t.Errorf("links over the cap = %d, want 5 rendered ReasonTooMany", tooMany)
+	}
+}
+
+// funcProber runs an arbitrary function as its Probe body.
+type funcProber struct {
+	system links.System
+	fn     func(ls []links.Link) map[string]Result
+}
+
+func (p funcProber) System() links.System { return p.system }
+
+func (p funcProber) Probe(_ context.Context, ls []links.Link, _ sources.Watermark) (map[string]Result, error) {
+	return p.fn(ls), nil
 }
 
 // The whole report golden-pins the JSON shape, including a no-work-log task.

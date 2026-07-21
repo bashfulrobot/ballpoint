@@ -12,6 +12,15 @@ import (
 // runDeadline bounds one whole Run, the same way #2's Probe does.
 const runDeadline = 5 * time.Minute
 
+// maxLinksPerSystem caps how many distinct records one system is probed for in a
+// single run. Task text is attacker-influenceable, and the REST probers issue
+// one request per record, so without a cap a single comment stuffed with
+// thousands of distinct ids could amplify into thousands of outbound requests,
+// burn the account's API quota, and starve every other task's links inside the
+// run deadline. The cap sits far above any real corpus (the measured one is 148
+// links across all systems); the excess renders unchecked, never dropped.
+const maxLinksPerSystem = 500
+
 // LinkFreshness is the engine's per-link verdict in the report.
 type LinkFreshness struct {
 	Key          string     `json:"key"`
@@ -73,27 +82,37 @@ func Run(ctx context.Context, tasks []sources.Task, since sources.Watermark, reg
 	// Probe each system once. results maps a link key to its Result.
 	results := map[string]Result{}
 	for system, ls := range bySystem {
+		// Cap the per-system fan-out. Anything beyond the cap renders unchecked
+		// so the report still accounts for it, but it never reaches a prober.
+		probeLinks := ls
+		if len(ls) > maxLinksPerSystem {
+			probeLinks = ls[:maxLinksPerSystem]
+			for _, l := range ls[maxLinksPerSystem:] {
+				results[l.Key()] = Result{Unchecked: true, Reason: ReasonTooMany}
+			}
+		}
+
 		prober, ok := reg.For(system)
 		if !ok {
-			for _, l := range ls {
+			for _, l := range probeLinks {
 				results[l.Key()] = Result{Unchecked: true, Reason: reasonForUnprobed(system)}
 			}
 			continue
 		}
-		out, err := prober.Probe(ctx, ls, since)
+		out, err := prober.Probe(ctx, probeLinks, since)
 		if err != nil {
 			reason := ReasonError
 			if ctx.Err() != nil {
 				reason = ReasonTimeout
 			}
-			for _, l := range ls {
+			for _, l := range probeLinks {
 				results[l.Key()] = Result{Unchecked: true, Reason: reason}
 			}
 			continue
 		}
 		// A key the prober was asked about but omitted is unchecked, never a
 		// silent no-change.
-		for _, l := range ls {
+		for _, l := range probeLinks {
 			if r, ok := out[l.Key()]; ok {
 				results[l.Key()] = r
 			} else {

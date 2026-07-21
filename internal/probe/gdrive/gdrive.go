@@ -53,7 +53,11 @@ type driveFile struct {
 }
 
 // Probe queries each linked file for its modifiedTime. Any file it cannot
-// positively confirm renders unchecked, never a false unchanged.
+// positively confirm renders unchecked, never a false unchanged. The incoming
+// watermark is unused on purpose: each query returns an absolute time and the
+// engine compares it against the work-log baseline, so the cost is one request
+// per record, bounded by the engine's per-system cap, the run deadline, and this
+// client's rate limiter.
 func (c *Client) Probe(ctx context.Context, ls []links.Link, _ sources.Watermark) (map[string]probe.Result, error) {
 	out := make(map[string]probe.Result, len(ls))
 	for _, l := range ls {

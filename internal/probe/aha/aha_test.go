@@ -13,17 +13,19 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/sources"
 )
 
-func TestProbeQueriesByReference(t *testing.T) {
+func TestProbeQueriesIdeaByReference(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Errorf("auth = %q, want Bearer test-token", got)
 		}
-		if !strings.HasSuffix(r.URL.Path, "/features/GTWY-I-1484") {
-			t.Errorf("path = %q, want the per-record features path", r.URL.Path)
+		// The reference is an idea key, so the prober must hit the ideas
+		// endpoint, not features.
+		if !strings.HasSuffix(r.URL.Path, "/ideas/GTWY-I-1484") {
+			t.Errorf("path = %q, want the per-idea path", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"feature": map[string]any{"reference_num": "GTWY-I-1484", "updated_at": "2026-07-20T09:00:00Z"},
+			"idea": map[string]any{"reference_num": "GTWY-I-1484", "updated_at": "2026-07-20T09:00:00Z"},
 		})
 	}))
 	defer srv.Close()

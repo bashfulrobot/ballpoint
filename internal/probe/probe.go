@@ -22,6 +22,7 @@ const (
 	ReasonError        Reason = "probe error"
 	ReasonTimeout      Reason = "probe timed out"
 	ReasonUnparseable  Reason = "link could not be parsed"
+	ReasonTooMany      Reason = "too many references to probe this run"
 )
 
 // Result is a prober's per-link finding: a last activity time, or an

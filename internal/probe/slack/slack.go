@@ -162,11 +162,22 @@ func (c *Client) confirmThread(ctx context.Context, channel, thread string) prob
 	if err != nil {
 		return probe.Result{Unchecked: true, Reason: reasonFor(ctx, err)}
 	}
+	// Take the newest of every message ts and every latest_reply. The parent
+	// message carries latest_reply, which is authoritative even when the thread
+	// has more replies than one page returns, so this does not underreport a
+	// thread with a newer reply on a later page.
 	var newest time.Time
-	for _, m := range rep.Messages {
-		if t, err := parseSlackTS(m.TS); err == nil && t.After(newest) {
+	consider := func(ts string) {
+		if ts == "" {
+			return
+		}
+		if t, err := parseSlackTS(ts); err == nil && t.After(newest) {
 			newest = t
 		}
+	}
+	for _, m := range rep.Messages {
+		consider(m.TS)
+		consider(m.LatestReply)
 	}
 	if newest.IsZero() {
 		// The thread carried no parseable message, so freshness is unconfirmed.
