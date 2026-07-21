@@ -207,6 +207,27 @@ func TestModelDraftEmptyBodyRejected(t *testing.T) {
 	}
 }
 
+func TestModelPositionalRejectsFlagLikeArg(t *testing.T) {
+	m, rec := newTestModel(t, 1)
+	out, _ := m.Update(key('c')) // col, ArgPositional
+	out, _ = out.(Model).Update(typeInto("--force"))
+	out.(Model).Update(enter())
+	if len(rec.calls) != 0 {
+		t.Errorf("a flag-like positional arg was passed to the script: %v", rec.calls)
+	}
+}
+
+func TestModelMergeRejectsFlagLikeLoser(t *testing.T) {
+	m, rec := newTestModel(t, 1)
+	out, _ := m.Update(key('M')) // merge, ArgMerge
+	out, _ = out.(Model).Update(typeInto("id:1 --oops"))
+	out, _ = out.(Model).Update(enter()) // opens confirm
+	out.(Model).Update(key('y'))         // confirm runs runInternal, which must reject
+	if len(rec.calls) != 0 {
+		t.Errorf("a flag-like merge loser was passed to the script: %v", rec.calls)
+	}
+}
+
 func TestModelConfirmEscCancels(t *testing.T) {
 	m, rec := newTestModel(t, 1)
 	out, _ := m.Update(key('D'))

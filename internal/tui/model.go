@@ -272,6 +272,13 @@ func (m Model) runInternal(v Verb, arg string) (tea.Model, tea.Cmd) {
 		m.status = "no task selected"
 		return m, nil
 	}
+	// Positional and merge arguments reach the script without a preceding flag,
+	// so a value beginning with "-" could be read as an option (argument
+	// injection). The ref is "id:"-prefixed and safe; reject flag-like operands.
+	if (v.Arg == ArgPositional || v.Arg == ArgMerge) && hasFlagLikeToken(arg) {
+		m.status = fmt.Sprintf("%s: arguments cannot start with '-'", v.Name)
+		return m, nil
+	}
 	ref := "id:" + c.TaskID
 	if err := m.macro.ExecArgv(v.Name, v.Script, BuildArgv(v, ref, arg)); err != nil {
 		m.status = err.Error()
@@ -365,6 +372,17 @@ func outwardFromArg(arg string) (Verb, bool) {
 		return Verb{}, false
 	}
 	return v, true
+}
+
+// hasFlagLikeToken reports whether any whitespace-delimited token begins with a
+// dash, so a positional or merge operand cannot smuggle a flag to the script.
+func hasFlagLikeToken(s string) bool {
+	for _, f := range strings.Fields(s) {
+		if strings.HasPrefix(f, "-") {
+			return true
+		}
+	}
+	return false
 }
 
 func clamp(v, lo, hi int) int {

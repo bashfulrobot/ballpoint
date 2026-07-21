@@ -13,6 +13,13 @@ import (
 )
 
 // Entry is one queued outward action, serialised as one JSON object per line.
+//
+// Trust boundary: To and Body are free text and must be treated as untrusted by
+// the issue #6 dispatcher that drains this queue. The dispatcher validates the
+// recipient format and neutralizes the body before any send (a Slack or email
+// call, or an LLM step), the same provenance discipline the sources layer uses.
+// JSON marshaling keeps the JSONL itself injection-safe; the content inside a
+// field is the dispatcher's responsibility.
 type Entry struct {
 	ID       string    `json:"id"`
 	TaskID   string    `json:"task_id"`

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"net/url"
 	"os/exec"
 	"strings"
 
@@ -123,24 +124,46 @@ func (m Model) headerView() string {
 		return headerStyle.Render("No tasks in scope")
 	}
 	t := c.Task
-	title := headerStyle.Render(t.Title)
+	// Title, project, section, and due are collaborator-controllable and do not
+	// pass through glamour (only the body does), so sanitize them before they
+	// reach the terminal to strip escape sequences.
+	title := headerStyle.Render(sanitizeTerminal(t.Title))
 	meta := []string{}
 	if t.Project != "" {
-		loc := t.Project
+		loc := sanitizeTerminal(t.Project)
 		if t.Section != "" {
-			loc += " / " + t.Section
+			loc += " / " + sanitizeTerminal(t.Section)
 		}
 		meta = append(meta, loc)
 	}
 	if t.Priority != "" {
-		meta = append(meta, t.Priority)
+		meta = append(meta, sanitizeTerminal(t.Priority))
 	}
 	if t.Due != "" {
-		meta = append(meta, "due "+t.Due)
+		meta = append(meta, "due "+sanitizeTerminal(t.Due))
 	}
 	pos := fmt.Sprintf("[%d/%d]", m.cursor+1, len(m.cards))
 	line2 := dimStyle.Render(strings.Join(meta, "  ·  "))
 	return fmt.Sprintf("%s %s\n%s", pos, title, line2)
+}
+
+// sanitizeTerminal drops control bytes that could carry ANSI or OSC escape
+// sequences from collaborator-controlled text or script output, keeping only
+// tab and newline. It neutralizes cursor manipulation, title rewriting, and OSC
+// hyperlink or clipboard tricks in text the operator did not author.
+func sanitizeTerminal(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t' || r == '\n':
+			return r
+		case r < 0x20 || r == 0x7f:
+			return -1
+		case r >= 0x80 && r <= 0x9f:
+			return -1
+		default:
+			return r
+		}
+	}, s)
 }
 
 func (m Model) footerView() string {
@@ -156,15 +179,17 @@ func (m Model) footerView() string {
 	}
 	switch {
 	case m.confirming:
-		fmt.Fprintf(&b, "%s %q? [y/n]", m.confirmVerb.Name, m.confirmArg)
+		fmt.Fprintf(&b, "%s %q? [y/n]", m.confirmVerb.Name, sanitizeTerminal(m.confirmArg))
 	case m.prompting:
 		b.WriteString(m.prompt.View())
 	default:
 		b.WriteString(dimStyle.Render(actionLegend()))
 	}
 	if m.status != "" {
+		// The status line can carry a macro script's raw output, which may echo
+		// collaborator-controlled task content, so sanitize it too.
 		b.WriteString("\n")
-		b.WriteString(statusStyle.Render(m.status))
+		b.WriteString(statusStyle.Render(sanitizeTerminal(m.status)))
 	}
 	return b.String()
 }
@@ -220,8 +245,26 @@ func tierLabel(t Tier) string {
 }
 
 // openInBrowser is the default URL opener. It uses xdg-open and does not wait,
-// so opening a link never blocks the walk.
-func openInBrowser(url string) error {
-	cmd := exec.Command("xdg-open", url)
+// so opening a link never blocks the walk. The scheme is checked first so a
+// cached url can only reach the desktop handler chain when it is http(s), not a
+// file:// or custom-handler scheme.
+func openInBrowser(rawURL string) error {
+	if err := httpOnlyURL(rawURL); err != nil {
+		return err
+	}
+	cmd := exec.Command("xdg-open", rawURL)
 	return cmd.Start()
+}
+
+// httpOnlyURL rejects any URL whose scheme is not http or https, so a crafted or
+// drifted cache value cannot launch an arbitrary desktop handler.
+func httpOnlyURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parsing url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("refusing to open non-http(s) url scheme %q", u.Scheme)
+	}
+	return nil
 }
