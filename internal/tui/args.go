@@ -16,26 +16,40 @@ func BuildArgv(v Verb, ref, text string) []string {
 		return []string{ref, "--entry", text}
 	case ArgPositional:
 		return []string{ref, text}
-	case ArgDraft:
-		return []string{ref, "--text", text}
+	case ArgLink:
+		return linkArgv(ref, text)
 	case ArgMerge:
-		return mergeArgv(text)
+		return mergeArgv(ref, text)
 	default:
 		return []string{ref}
 	}
 }
 
-// mergeArgv maps "survivor loser [loser...]" onto td_merge.sh's flags. The first
-// ref survives; the rest are losers. A short input still produces a well-formed
-// argv so the script reports the mistake rather than the model guessing.
-func mergeArgv(text string) []string {
+// linkArgv maps "url [label]" onto td_worklog.sh's structured --link flag, so a
+// link is recorded as a link rather than free text in the entry. td_worklog.sh
+// requires --entry, so a short breadcrumb is written alongside the link.
+func linkArgv(ref, text string) []string {
 	fields := strings.Fields(text)
-	argv := make([]string, 0, len(fields)*2+2)
-	if len(fields) > 0 {
-		argv = append(argv, "--survivor", fields[0])
-		for _, loser := range fields[1:] {
-			argv = append(argv, "--loser", loser)
-		}
+	if len(fields) == 0 {
+		return []string{ref, "--entry", "linked"}
+	}
+	url := fields[0]
+	label := "link"
+	if len(fields) > 1 {
+		label = strings.Join(fields[1:], " ")
+	}
+	return []string{ref, "--link", label + "=" + url, "--entry", "linked " + label}
+}
+
+// mergeArgv maps "loser [loser...]" onto td_merge.sh's flags. The survivor is the
+// current card's ref, not a retyped token, so the walk cannot merge into the
+// wrong survivor by fat-finger. Every remaining field is a loser.
+func mergeArgv(survivor, text string) []string {
+	fields := strings.Fields(text)
+	argv := make([]string, 0, len(fields)*2+4)
+	argv = append(argv, "--survivor", survivor)
+	for _, loser := range fields {
+		argv = append(argv, "--loser", loser)
 	}
 	return append(argv, "--reason", "merged during triage walk")
 }

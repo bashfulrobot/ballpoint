@@ -141,6 +141,41 @@ func (s *Store) LoadAllTasks() ([]sources.Task, error) {
 	return tasks, nil
 }
 
+// PruneTasksExcept deletes every cached task whose id is not in keep. The probe
+// writes the current open set, so tasks completed or deleted in Todoist would
+// otherwise linger in the cache and keep surfacing in the walk. A file that
+// fails to delete is reported but does not stop the prune, so one locked entry
+// does not block the rest. It returns the count removed.
+func (s *Store) PruneTasksExcept(keep map[string]bool) (int, error) {
+	cacheDir := filepath.Join(s.root, "cache")
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("reading cache directory %s: %w", cacheDir, err)
+	}
+	removed := 0
+	var firstErr error
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(e.Name(), ".json")
+		if keep[id] {
+			continue
+		}
+		if err := os.Remove(filepath.Join(cacheDir, e.Name())); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("removing stale cache entry %s: %w", e.Name(), err)
+			}
+			continue
+		}
+		removed++
+	}
+	return removed, firstErr
+}
+
 func (s *Store) reportPath() string { return filepath.Join(s.root, "report.json") }
 
 // SaveReport writes the freshness report atomically, mirroring SaveWatermark.

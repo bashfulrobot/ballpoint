@@ -34,9 +34,19 @@ func TestBuildArgvPositional(t *testing.T) {
 
 func TestBuildArgvMerge(t *testing.T) {
 	v, _ := VerbForName("merge")
-	got := BuildArgv(v, "id:survivor", "id:1 id:2 id:3")
-	want := []string{"--survivor", "id:1", "--loser", "id:2", "--loser", "id:3", "--reason", "merged during triage walk"}
+	// The current card (id:survivor) is the survivor; the typed refs are losers.
+	got := BuildArgv(v, "id:survivor", "id:1 id:2")
+	want := []string{"--survivor", "id:survivor", "--loser", "id:1", "--loser", "id:2", "--reason", "merged during triage walk"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("BuildArgv merge = %v, want %v", got, want)
+	}
+}
+
+func TestBuildArgvLink(t *testing.T) {
+	v, _ := VerbForName("link")
+	got := BuildArgv(v, "id:9", "https://x.test/1 the ticket")
+	want := []string{"id:9", "--link", "the ticket=https://x.test/1", "--entry", "linked the ticket"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildArgv link = %v, want %v", got, want)
 	}
 }

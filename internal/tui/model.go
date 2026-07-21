@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -135,7 +134,7 @@ func (m Model) handleVerb(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch v.Tier {
 	case TierNav:
 		return m.handleNav(v)
-	case TierInternal, TierCompletion:
+	case TierInternal, TierCompletion, TierOutward:
 		if v.NeedsArg {
 			m.prompting = true
 			m.pendingVerb = v
@@ -210,8 +209,8 @@ func (m Model) handlePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// submitArg routes a typed argument. A draft whose first token names an outward
-// verb is queued, never sent. Completion verbs go through the confirm gate.
+// submitArg routes a typed argument. A draft is queued (never sent) once its
+// first token names a channel. Completion verbs go through the confirm gate.
 // Everything else runs its macro immediately.
 func (m Model) submitArg(v Verb, arg string) (tea.Model, tea.Cmd) {
 	if arg == "" {
@@ -219,9 +218,12 @@ func (m Model) submitArg(v Verb, arg string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if v.Name == "draft" {
-		if ov, ok := outwardFromArg(arg); ok {
-			return m.queueOutward(ov, arg)
+		ov, ok := outwardFromArg(arg)
+		if !ok {
+			m.status = "draft needs a channel first: nudge, email, or teams"
+			return m, nil
 		}
+		return m.queueOutward(ov, arg)
 	}
 	if v.Tier == TierCompletion {
 		m.confirming = true
@@ -234,6 +236,13 @@ func (m Model) submitArg(v Verb, arg string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyEsc {
+		m.confirming = false
+		m.confirmVerb = Verb{}
+		m.confirmArg = ""
+		m.status = "cancelled"
+		return m, nil
+	}
 	if msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
 		return m, nil
 	}
@@ -289,14 +298,21 @@ func (m Model) queueOutward(v Verb, arg string) (tea.Model, tea.Cmd) {
 	if len(fields) >= 3 {
 		body = strings.Join(fields[2:], " ")
 	}
+	if to == "" {
+		m.status = fmt.Sprintf("draft %s needs a recipient: draft %s <to> <text>", v.Name, v.Name)
+		return m, nil
+	}
+	// time.Now() at append, not m.now (which is the frozen card-age clock), so
+	// entries carry their real queue time and the id is unique across sessions.
+	now := time.Now()
 	entry := queue.Entry{
-		ID:       c.TaskID + "-" + strconv.Itoa(m.seq),
+		ID:       fmt.Sprintf("%s-%d-%d", c.TaskID, now.UnixNano(), m.seq),
 		TaskID:   c.TaskID,
 		TaskRef:  "id:" + c.TaskID,
 		Channel:  v.Name,
 		To:       to,
 		Body:     body,
-		QueuedAt: m.now,
+		QueuedAt: now,
 	}
 	if err := queue.Append(m.stateRoot, entry); err != nil {
 		m.status = "queue failed: " + err.Error()

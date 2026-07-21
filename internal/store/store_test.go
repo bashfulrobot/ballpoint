@@ -29,6 +29,46 @@ func TestLoadAllTasks(t *testing.T) {
 	}
 }
 
+func TestPruneTasksExcept(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"1", "2", "3"} {
+		if err := s.SaveTask(sources.Task{ID: id, Title: "t" + id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed, err := s.PruneTasksExcept(map[string]bool{"2": true})
+	if err != nil {
+		t.Fatalf("PruneTasksExcept() error = %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2", removed)
+	}
+	got, err := s.LoadAllTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "2" {
+		t.Fatalf("after prune = %+v, want only task 2", got)
+	}
+}
+
+func TestPruneTasksExceptEmptyCache(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := s.PruneTasksExcept(map[string]bool{"1": true})
+	if err != nil {
+		t.Fatalf("PruneTasksExcept() on empty cache error = %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed = %d on empty cache, want 0", removed)
+	}
+}
+
 func TestLoadAllTasksEmpty(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {

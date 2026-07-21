@@ -56,7 +56,9 @@ func (wf walkFlags) scope() (s tui.Scope, hasScope bool, err error) {
 // flag or the interactive picker; a cold cache is refreshed once by shelling out
 // to probe.
 func runWalk(wf walkFlags, stdout, stderr io.Writer) error {
-	if !isInteractive(stdout) {
+	// The TUI reads stdin and draws to stdout, so both must be a terminal. A TTY
+	// stdout with piped stdin would otherwise pass and then exit instantly on EOF.
+	if !isTerminalFile(stdout) || !term.IsTerminal(int(os.Stdin.Fd())) {
 		return errors.New("the triage walk needs an interactive terminal")
 	}
 
@@ -90,7 +92,11 @@ func runWalk(wf walkFlags, stdout, stderr io.Writer) error {
 	}
 
 	data, err := tui.ResolveWalk(tui.WalkConfig{StateDir: dir, Scope: scope, ScriptsDir: wf.scriptsDir})
-	if errors.Is(err, tui.ErrEmptyCache) && !wf.refresh {
+	// Refresh and retry once for a cold cache, or for a single --task id that is
+	// not cached yet (a brand-new task), since a probe would bring it in. A
+	// project or filter that simply matches nothing does not refresh.
+	if !wf.refresh && (errors.Is(err, tui.ErrEmptyCache) ||
+		(errors.Is(err, tui.ErrScopeEmpty) && scope.Kind == tui.ScopeTask)) {
 		if err := refreshCache(stderr); err != nil {
 			return err
 		}
@@ -103,9 +109,9 @@ func runWalk(wf walkFlags, stdout, stderr io.Writer) error {
 	return tui.Run(data)
 }
 
-// isInteractive reports whether w is a terminal. The TUI cannot run to a pipe or
-// a test buffer, so a non-terminal writer fails fast rather than hanging.
-func isInteractive(w io.Writer) bool {
+// isTerminalFile reports whether w is a terminal. The TUI cannot run to a pipe
+// or a test buffer, so a non-terminal writer fails fast rather than hanging.
+func isTerminalFile(w io.Writer) bool {
 	f, ok := w.(*os.File)
 	return ok && term.IsTerminal(int(f.Fd()))
 }

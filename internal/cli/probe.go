@@ -94,10 +94,17 @@ func runProbe(deps probeDeps, stdout, stderr io.Writer) error {
 
 	// Persist the corpus so the TUI (issue #5) walks it offline. A single task
 	// that fails to cache is not fatal; the walk simply skips a missing card.
+	keep := make(map[string]bool, len(deps.tasks))
 	for _, task := range deps.tasks {
+		keep[task.ID] = true
 		if err := st.SaveTask(task); err != nil {
 			_, _ = fmt.Fprintf(stderr, "warning: caching task %s: %v\n", task.ID, err)
 		}
+	}
+	// Evict tasks completed or deleted in Todoist since the last probe. Without
+	// this the cache only grows and the walk keeps presenting done tasks.
+	if _, err := st.PruneTasksExcept(keep); err != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: pruning stale cache entries: %v\n", err)
 	}
 
 	start := time.Now()

@@ -197,6 +197,34 @@ func TestRunProbePersistsCorpus(t *testing.T) {
 	}
 }
 
+// A task completed or deleted in Todoist drops out of the fetched set. The next
+// probe must evict its stale cache entry, otherwise the walk keeps presenting it.
+func TestRunProbeEvictsStaleTasks(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Seed a task that a later probe will not return (it was completed).
+	if err := st.SaveTask(sources.Task{ID: "stale", Title: "done in todoist"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	fresh := []sources.Task{{ID: "1", Title: "one"}}
+	if err := runProbe(probeDeps{tasks: fresh, stateDir: dir}, &stdout, &stderr); err != nil {
+		t.Fatalf("runProbe() error = %v", err)
+	}
+
+	got, err := st.LoadAllTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "1" {
+		t.Fatalf("after probe = %+v, want only the fresh task; stale entry was not evicted", got)
+	}
+}
+
 // probe --dry-run extracts and groups links from tasks and reports planned
 // per-system call counts without touching the network or writing a watermark,
 // so it runs green with no credentials. It exercises runProbe with an injected

@@ -168,16 +168,44 @@ func TestModelOutwardQueuesNeverSends(t *testing.T) {
 	_ = out
 }
 
-func TestModelDraftPlainShellsOut(t *testing.T) {
-	m, rec := newTestModel(t, 1)
+func TestModelDraftWithoutChannelDoesNothing(t *testing.T) {
+	root := t.TempDir()
+	m, rec := newTestModelAt(t, root, 1)
 	out, _ := m.Update(key('r'))
 	out, _ = out.(Model).Update(typeInto("remember to follow up"))
 	out.(Model).Update(enter())
-	if len(rec.calls) != 1 {
-		t.Fatalf("plain draft should shell out once, got %d calls", len(rec.calls))
+	if len(rec.calls) != 0 {
+		t.Errorf("draft with no channel shelled out: %v", rec.calls)
 	}
-	if rec.calls[0][0] != "/scripts/td_draft.sh" {
-		t.Errorf("draft ran %q, want td_draft.sh", rec.calls[0][0])
+	entries, _ := queue.Load(root)
+	if len(entries) != 0 {
+		t.Errorf("draft with no channel queued %d entries, want 0", len(entries))
+	}
+}
+
+func TestModelDraftEmptyRecipientRejected(t *testing.T) {
+	root := t.TempDir()
+	m, _ := newTestModelAt(t, root, 1)
+	out, _ := m.Update(key('r'))
+	out, _ = out.(Model).Update(typeInto("nudge"))
+	out.(Model).Update(enter())
+	entries, _ := queue.Load(root)
+	if len(entries) != 0 {
+		t.Errorf("channel with no recipient queued %d entries, want 0", len(entries))
+	}
+}
+
+func TestModelConfirmEscCancels(t *testing.T) {
+	m, rec := newTestModel(t, 1)
+	out, _ := m.Update(key('D'))
+	out, _ = out.(Model).Update(typeInto("shipped"))
+	out, _ = out.(Model).Update(enter())
+	out, _ = out.(Model).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if out.(Model).confirming {
+		t.Error("Esc should close the confirm gate")
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("Esc-cancelled completion ran the macro: %v", rec.calls)
 	}
 }
 
