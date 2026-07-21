@@ -12,6 +12,7 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/links"
 	"github.com/bashfulrobot/ballpoint/internal/probe"
 	"github.com/bashfulrobot/ballpoint/internal/probe/probeset"
+	"github.com/bashfulrobot/ballpoint/internal/probe/salesforce"
 	"github.com/bashfulrobot/ballpoint/internal/secrets"
 	"github.com/bashfulrobot/ballpoint/internal/sources"
 	"github.com/bashfulrobot/ballpoint/internal/sources/todoist"
@@ -47,6 +48,9 @@ func resolveProbeDeps(dryRun, benchmark bool) (probeDeps, error) {
 	deps.creds.Slack, _ = secrets.Load(path, "slack_token")
 	deps.creds.Aha, _ = secrets.Load(path, "aha_token")
 	deps.creds.Google, _ = secrets.Load(path, "google_token")
+	// Salesforce auth lives in the sf CLI's own store, not this secrets file, so
+	// the prober is gated on the binary being present rather than a token.
+	deps.creds.Salesforce = salesforce.Available()
 
 	token, err := secrets.Load(path, "todoist_token")
 	if err != nil {
