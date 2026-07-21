@@ -20,11 +20,21 @@ let
       Set programs.ballpoint.package to a package you build yourself.
     '');
 
+  # systemd parses ExecStart with its own quoting rules, not a shell's, so shell
+  # escaping (lib.escapeShellArgs) can emit sequences systemd rejects: it escapes
+  # an embedded single quote as '\'' , putting a backslash right after a closing
+  # quote, which systemd.syntax(7) forbids. That would break a secretsPath
+  # containing an apostrophe. This mirrors nixpkgs' own escapeSystemdExecArgs
+  # (a NixOS-internal util not exposed in lib): JSON-quote each argument, then
+  # escape systemd's % and $ specifiers.
+  escapeSystemdExecArg = arg: lib.replaceStrings [ "%" "$" ] [ "%%" "$$" ] (builtins.toJSON arg);
+  escapeSystemdExecArgs = args: lib.concatMapStringsSep " " escapeSystemdExecArg args;
+
   # The probe invocation the timer runs. Concurrency and secrets path are passed
   # only when set, so the binary's own defaults apply otherwise. The secrets path
   # is a path, never a credential, so nothing secret enters the store.
-  probeArgs = lib.escapeShellArgs (
-    [ "probe" ]
+  probeCommand = escapeSystemdExecArgs (
+    [ "${cfg.package}/bin/ballpoint" "probe" ]
     ++ lib.optionals (cfg.prewarm.concurrency > 0) [ "--concurrency" (toString cfg.prewarm.concurrency) ]
     ++ lib.optionals (cfg.prewarm.secretsPath != null) [ "--secrets-path" cfg.prewarm.secretsPath ]
   );
@@ -73,10 +83,28 @@ in
         description = "Delay before an on-failure restart, so a boot-time network race retries.";
       };
 
+      startLimitIntervalSec = lib.mkOption {
+        type = lib.types.str;
+        default = "1h";
+        description = ''
+          Window over which startLimitBurst restarts are counted. Without a
+          bound, an on-failure restart every restartSec turns a permanent
+          failure (a missing secrets file, a bad token) into a loop that never
+          gives up. The timer still re-fires on onCalendar and onStartupSec, so
+          the restart only has to cover a transient boot race.
+        '';
+      };
+
+      startLimitBurst = lib.mkOption {
+        type = lib.types.ints.unsigned;
+        default = 5;
+        description = "Restarts allowed within startLimitIntervalSec before systemd stops retrying and lets the unit fail.";
+      };
+
       concurrency = lib.mkOption {
         type = lib.types.ints.unsigned;
         default = 0;
-        description = "Bounded Todoist fetch concurrency. Zero uses the binary default (12).";
+        description = "Bounded Todoist fetch concurrency. Zero uses the binary's built-in default.";
       };
 
       secretsPath = lib.mkOption {
@@ -84,9 +112,9 @@ in
         default = null;
         example = "/home/alice/.config/nixos-secrets/secrets.json";
         description = ''
-          Path to the off-store secrets file. Null uses the binary default,
-          ~/.config/nixos-secrets/secrets.json. The value is a path, never a
-          credential, so nothing secret enters the store.
+          Path to the off-store secrets file. Null uses the binary's built-in
+          default path. The value is a path, never a credential, so nothing
+          secret enters the store.
         '';
       };
     };
@@ -97,10 +125,16 @@ in
 
     (lib.mkIf cfg.prewarm.enable {
       systemd.user.services.ballpoint-probe = {
-        Unit.Description = "ballpoint freshness prewarm probe";
+        Unit = {
+          Description = "ballpoint freshness prewarm probe";
+          # Bound the on-failure restart so a permanent failure stops looping
+          # instead of retrying every restartSec forever.
+          StartLimitIntervalSec = cfg.prewarm.startLimitIntervalSec;
+          StartLimitBurst = cfg.prewarm.startLimitBurst;
+        };
         Service = {
           Type = "oneshot";
-          ExecStart = "${cfg.package}/bin/ballpoint ${probeArgs}";
+          ExecStart = probeCommand;
           # A boot-time network race retries rather than failing the day. No
           # graphical-session binding, so it runs headless under the timer.
           Restart = "on-failure";

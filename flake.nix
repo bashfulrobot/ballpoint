@@ -90,6 +90,8 @@
                     programs.ballpoint.prewarm.enable = true;
                     programs.ballpoint.prewarm.onCalendar = "Mon 09:00";
                     programs.ballpoint.prewarm.concurrency = 6;
+                    programs.ballpoint.prewarm.secretsPath = "/tmp/x.json";
+                    programs.ballpoint.prewarm.startLimitBurst = 3;
                   }
                 ];
               };
@@ -98,6 +100,9 @@
               service = withTimer.config.systemd.user.services.ballpoint-probe;
               timer = withTimer.config.systemd.user.timers.ballpoint-probe;
               b2s = pkgs.lib.boolToString;
+              # systemd ExecStart quoting: both flags rendered, concurrency before
+              # secrets-path, each argument double-quoted.
+              wantExec = ''"probe" "--concurrency" "6" "--secrets-path" "/tmp/x.json"'';
             in
             pkgs.runCommand "check-hm-module" { } ''
               test "${installed}" = "${self.packages.${system}.default}"
@@ -111,10 +116,18 @@
               test "${service.Service.Type}" = "oneshot"
               test "${service.Service.Restart}" = "on-failure"
               test "${b2s (service ? Install)}" = "false"
-              case "${service.Service.ExecStart}" in
-                *"/bin/ballpoint probe --concurrency 6") : ;;
-                *) echo "unexpected ExecStart: ${service.Service.ExecStart}" >&2; exit 1 ;;
+
+              # ExecStart carries both flags in order, quoted the systemd way.
+              actual=${pkgs.lib.escapeShellArg service.Service.ExecStart}
+              expected=${pkgs.lib.escapeShellArg wantExec}
+              case "$actual" in
+                *"$expected") : ;;
+                *) echo "unexpected ExecStart: $actual" >&2; exit 1 ;;
               esac
+
+              # The on-failure restart is bounded, so a permanent failure stops looping.
+              test "${toString service.Unit.StartLimitBurst}" = "3"
+              test -n "${service.Unit.StartLimitIntervalSec}"
 
               # Timer: calendar plus boot, catches up missed runs, wanted by timers.target.
               test "${timer.Timer.OnCalendar}" = "Mon 09:00"

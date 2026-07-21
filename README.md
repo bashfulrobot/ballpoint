@@ -272,10 +272,12 @@ The timer sets `OnCalendar`, `OnStartupSec`, `Persistent = true`, and
 `RandomizedDelaySec`. A run missed while the machine was off is caught up on the
 next boot, and a reboot triggers a fresh pass. The service is `Type = oneshot`
 with `Restart = on-failure`, so a boot-time network race retries instead of
-failing the day. It is not bound to `graphical-session.target`, so it runs
-whether or not a desktop session is active. `secretsPath` is a path, not a
-credential, so nothing secret enters the Nix store. The probe reads the values
-from that file at runtime.
+failing the day. The retry is bounded by `startLimitBurst` within
+`startLimitIntervalSec`, so a permanent failure (a missing secrets file, a bad
+token) stops looping and lets the unit fail instead of retrying forever. It is
+not bound to `graphical-session.target`, so it runs whether or not a desktop
+session is active. `secretsPath` is a path, not a credential, so nothing secret
+enters the Nix store. The probe reads the values from that file at runtime.
 
 Firing user timers at boot rather than at login needs systemd user lingering,
 tracked in `nixerator#237`.
