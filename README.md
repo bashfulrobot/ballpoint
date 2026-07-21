@@ -8,27 +8,81 @@ keeps long jobs from blocking the walk.
 
 ## Status
 
-Bootstrap only. Every subcommand is wired and returns `not implemented`.
+The data layer is built. The subcommands that consume it are still wired to
+return `not implemented`.
 
-| Component | Issue |
-| --- | --- |
-| Source interface and Todoist HTTP client | #2 |
-| Freshness probe engine | #3 |
-| Prewarm timer as a home-manager module | #4 |
-| Triage walk TUI | #5 |
-| Dispatcher | #6 |
+| Component | Issue | State |
+| --- | --- | --- |
+| Source interface and Todoist HTTP client | #2 | Done |
+| Freshness probe engine | #3 | Wired, not implemented |
+| Prewarm timer as a home-manager module | #4 | Wired, not implemented |
+| Triage walk TUI | #5 | Wired, not implemented |
+| Dispatcher | #6 | Wired, not implemented |
 
 ## Usage
 
 ```
-ballpoint            walk the triage queue
-ballpoint probe      refresh freshness data
-ballpoint dispatch   run queued work
-ballpoint --version  print the build version
+ballpoint                     walk the triage queue
+ballpoint probe [--benchmark] refresh freshness data
+ballpoint dispatch            run queued work
+ballpoint --version           print the build version
 ```
 
 Unimplemented subcommands exit non-zero, so the systemd timer in issue #4
 cannot record success for work that never ran.
+
+## Sources
+
+A source is one external system ballpoint reads. Each lives in its own package
+under `internal/sources` and implements `sources.Source`, a `Name` and a
+`Probe(ctx, since)` that returns the fetched tasks, the link keys that changed
+since the last run, and the watermark to persist. Adding a system is adding one
+package. The only source today is `internal/sources/todoist`, a direct HTTP
+client for the Todoist v1 API that replaces shelling out to the `td` CLI on the
+read path.
+
+The client fetches the task list once with cursor pagination, resolves project
+and section names, and then fetches every task's comments in parallel under a
+bounded group (default 12, tunable). Todoist's inverted priority (4 is highest)
+is normalised to `p1` through `p4` at the client boundary, so nothing
+downstream handles the raw integer.
+
+`internal/store` persists what a probe produces. Watermarks map a link key to
+the last activity time in `watermarks.json`, keyed by link. The cache holds the
+last fetched task per file in `cache/<taskID>.json`, keyed by task. Every write
+lands through a temp file and a rename, so a killed timer never leaves a torn
+file. Both live under the state directory described below.
+
+## Secrets
+
+The Todoist token is read at runtime from the off-store secrets file at
+`~/.config/nixos-secrets/secrets.json`, at the flat top-level key
+`todoist_token`. It never comes from an environment variable or the Nix store.
+The reason is issue #4: the prewarm timer runs as a systemd user service, and
+user services do not inherit session variables. The pattern follows
+`modules/apps/cli/aha-fr-report/default.nix` in the nixerator repo, which reads
+its token from the same file inside the script for the same reason.
+`internal/secrets` is the loader; the value is returned to the caller and never
+logged, and no error message includes it.
+
+## Benchmark
+
+The engineering claim is that talking HTTP directly, with the comment fetches
+run concurrently, removes the sequential cost of the old `td` prefetch (15.3 s
+for a 71 task scope at 12 way concurrency).
+
+`TestConcurrencySpeedup` proves the concurrency mechanism reproducibly, with no
+token and no network. It drives the real client against a mock server that
+sleeps a fixed delay per request, once sequentially and once at 12 way
+concurrency, and asserts the concurrent run is at least four times faster. A
+representative local run: sequential 781 ms, 12 way 100 ms, a 7.8x speedup.
+This measures the mechanism against a mock, not the live API.
+
+The live figure needs the real token, the network, and the user's own scope,
+which an autonomous run and CI cannot supply and must never read. Issue #3
+wires the prefetch behind `ballpoint probe --benchmark`, which loads the token
+the normal way, runs one real prefetch, and prints the wall clock against the
+15.3 s baseline. The flag parses today; the prefetch behind it lands with #3.
 
 ## Development
 
