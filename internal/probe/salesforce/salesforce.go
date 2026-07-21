@@ -13,6 +13,7 @@ import (
 	"io"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,8 +28,17 @@ import (
 // 2026-07-20T09:00:00.000+0000.
 const sfTimeLayout = "2006-01-02T15:04:05.000-0700"
 
-// prefixObject maps a Salesforce 3-char id key prefix to its sObject, used when
-// a record arrives without an object hint from its URL.
+// maxQueryGroups caps how many distinct sObject groups one run will query. Each
+// group costs one `sf` subprocess (a Node process), and task text is
+// attacker-influenceable, so without a cap a comment stuffed with hundreds of
+// distinct object names could spawn hundreds of processes and burn the org's API
+// quota. The cap sits far above any real corpus (a run touches a handful of
+// objects); the excess renders unchecked rather than spawning.
+const maxQueryGroups = 20
+
+// prefixObject maps a Salesforce 3-char id key prefix to its sObject. The prefix
+// is the authoritative source of an id's object; a URL object hint is only a
+// fallback for a prefix this map does not cover.
 var prefixObject = map[string]string{
 	"001": "Account", "003": "Contact", "005": "User",
 	"006": "Opportunity", "00Q": "Lead", "500": "Case",
@@ -154,8 +164,20 @@ func (c *Client) Probe(ctx context.Context, ls []links.Link, _ sources.Watermark
 		}
 	}
 
-	for object, group := range idsByObject {
-		c.queryIDs(ctx, object, group, out)
+	// Query each distinct sObject group, in sorted order so the cap is
+	// deterministic. Groups past the cap render unchecked instead of spawning
+	// another subprocess.
+	objects := make([]string, 0, len(idsByObject))
+	for object := range idsByObject {
+		objects = append(objects, object)
+	}
+	sort.Strings(objects)
+	for i, object := range objects {
+		if i >= maxQueryGroups {
+			markGroup(idsByObject[object], probe.ReasonTooMany, out)
+			continue
+		}
+		c.queryIDs(ctx, object, idsByObject[object], out)
 	}
 	if len(caseNumbers) > 0 {
 		c.queryCases(ctx, caseNumbers, out)
@@ -163,15 +185,22 @@ func (c *Client) Probe(ctx context.Context, ls []links.Link, _ sources.Watermark
 	return out, nil
 }
 
-// objectFor resolves a record's sObject: the Lightning URL object hint when
-// present, otherwise the id's 3-char key prefix. ok is false for an unmapped
-// prefix, which renders the link unchecked with the no-probe reason.
+// objectFor resolves a record's sObject. A Salesforce id's 3-char key prefix
+// intrinsically determines its object, so a known prefix is authoritative and a
+// URL object hint cannot override it. This closes a redirect where a hostile
+// Lightning URL pairs a real id with an arbitrary object name to point the query
+// at a different sObject. The URL hint is only the fallback, used for a custom
+// object or a standard object whose prefix this map does not cover (its object
+// cannot be derived any other way). ok is false when neither source yields an
+// object, which renders the link unchecked with the no-probe reason.
 func objectFor(l links.Link) (string, bool) {
+	if object, known := prefixObject[l.Record[:3]]; known {
+		return object, true
+	}
 	if object := l.Fields["object"]; object != "" {
 		return object, true
 	}
-	object, ok := prefixObject[l.Record[:3]]
-	return object, ok
+	return "", false
 }
 
 // queryIDs runs one `SELECT Id, LastModifiedDate FROM <object> WHERE Id IN (...)`
