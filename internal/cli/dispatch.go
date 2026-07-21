@@ -104,7 +104,7 @@ func nowUTC() time.Time { return time.Now().UTC() }
 
 // runDispatch runs the dispatcher or, with --status, prints the last run's job
 // statuses.
-func runDispatch(deps dispatchDeps, stdout, stderr io.Writer) error {
+func runDispatch(deps dispatchDeps, stdout, _ io.Writer) error {
 	if deps.statusOnly {
 		statuses, err := dispatch.LoadStatuses(deps.root)
 		if err != nil {

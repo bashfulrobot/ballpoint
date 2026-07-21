@@ -62,7 +62,7 @@ const (
 func Run(ctx context.Context, cfg Config) (Summary, error) {
 	groups := groupByTask(cfg.Entries)
 	if len(groups) == 0 {
-		fmt.Fprintln(cfg.Stdout, "nothing queued")
+		_, _ = fmt.Fprintln(cfg.Stdout, "nothing queued")
 		return Summary{}, nil
 	}
 
@@ -205,20 +205,20 @@ func runDry(cfg Config, groups []taskGroup) (Summary, error) {
 	for _, g := range groups {
 		task, ok, err := cfg.Store.LoadTask(g.id)
 		if err != nil || !ok {
-			fmt.Fprintf(cfg.Stdout, "task %s: not in cache, would fail\n\n", g.id)
+			_, _ = fmt.Fprintf(cfg.Stdout, "task %s: not in cache, would fail\n\n", g.id)
 			continue
 		}
 		prompt := BuildPrompt(task, cfg.Report.Tasks[g.id], "DRYRUN")
-		fmt.Fprintf(cfg.Stdout, "=== task %s prompt ===\n%s\n", g.id, prompt)
-		fmt.Fprintf(cfg.Stdout, "=== task %s planned writes ===\n", g.id)
-		fmt.Fprintf(cfg.Stdout, "worklog: %v\n", WorklogArgv(cfg.ScriptsDir, g.ref, Assessment{Summary: "<assessment>"}))
+		_, _ = fmt.Fprintf(cfg.Stdout, "=== task %s prompt ===\n%s\n", g.id, prompt)
+		_, _ = fmt.Fprintf(cfg.Stdout, "=== task %s planned writes ===\n", g.id)
+		_, _ = fmt.Fprintf(cfg.Stdout, "worklog: %v\n", WorklogArgv(cfg.ScriptsDir, g.ref, Assessment{Summary: "<assessment>"}))
 		for _, e := range g.entries {
 			if e.Channel == "" || e.To == "" || e.Body == "" {
 				continue
 			}
-			fmt.Fprintf(cfg.Stdout, "draft: %v\n", DraftArgv(cfg.ScriptsDir, g.ref, e))
+			_, _ = fmt.Fprintf(cfg.Stdout, "draft: %v\n", DraftArgv(cfg.ScriptsDir, g.ref, e))
 		}
-		fmt.Fprintln(cfg.Stdout)
+		_, _ = fmt.Fprintln(cfg.Stdout)
 	}
 	return Summary{Skipped: len(groups)}, nil
 }
