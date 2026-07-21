@@ -30,6 +30,12 @@ const maxRetries = 3
 // server cannot park the process for an arbitrary time.
 const maxRetryWait = 60 * time.Second
 
+// maxResponseBytes caps how much of a single response body the client reads,
+// for both the decode and the connection-reuse drain. A 200 item page is a
+// few megabytes at most, so this only trips on a server sending far more than
+// any real page holds.
+const maxResponseBytes = 32 << 20 // 32 MiB
+
 // Client talks to the Todoist v1 API. Construct it with New.
 type Client struct {
 	baseURL   string
@@ -221,7 +227,11 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 			return fmt.Errorf("todoist %s returned %s", path, resp.Status)
 		}
 
-		decodeErr := json.NewDecoder(resp.Body).Decode(out)
+		// Decode through a size limit so a hostile or runaway server cannot
+		// drive memory with one giant body. A real page (200 items) is well
+		// under the cap; a body past it truncates and fails the decode rather
+		// than filling the heap.
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(out)
 		drainClose(resp)
 		if decodeErr != nil {
 			return fmt.Errorf("decoding %s response: %w", path, decodeErr)
@@ -231,9 +241,11 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 }
 
 // drainClose reads any remaining body and closes it, so the connection can be
-// reused. Errors carry no signal a caller can act on.
+// reused. The drain is itself bounded, so an oversized body is abandoned (the
+// connection is not reused) rather than read in full. Errors carry no signal a
+// caller can act on.
 func drainClose(resp *http.Response) {
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 	_ = resp.Body.Close()
 }
 
