@@ -93,10 +93,12 @@ func writeAtomic(path string, v any) error {
 		return fmt.Errorf("creating temp file for %s: %w", path, err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op after a successful rename
+	// Cleanup on any early return; a no-op after a successful rename.
+	defer func() { _ = os.Remove(tmpName) }()
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		// The write error is the one worth returning; the close is cleanup.
+		_ = tmp.Close()
 		return fmt.Errorf("writing %s: %w", tmpName, err)
 	}
 	if err := tmp.Close(); err != nil {
