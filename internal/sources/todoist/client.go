@@ -1,3 +1,5 @@
+// Package todoist is the direct Todoist v1 HTTP client. It implements
+// sources.Source, replacing the shelled-out td CLI on the read path.
 package todoist
 
 import (
@@ -144,7 +146,9 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 	if err != nil {
 		return fmt.Errorf("requesting %s: %w", path, err)
 	}
-	defer resp.Body.Close()
+	// The body is drained by the JSON decoder below; a close error on a
+	// fully read response carries no signal the caller can act on.
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// The token is in a header, never the URL, so naming the endpoint and
