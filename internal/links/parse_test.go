@@ -44,6 +44,32 @@ func TestParseAha(t *testing.T) {
 	}
 }
 
+func TestParseSalesforceLightning(t *testing.T) {
+	rec, f := parseSalesforce("https://myorg.lightning.force.com/lightning/r/Opportunity/006XX000004Ci1wYAC/view")
+	if rec != "006XX000004Ci1wYAC" {
+		t.Errorf("record = %q, want the 18-char id", rec)
+	}
+	if f["object"] != "Opportunity" {
+		t.Errorf("object = %q, want Opportunity", f["object"])
+	}
+}
+
+func TestParseSalesforceClassic(t *testing.T) {
+	rec, f := parseSalesforce("https://na1.salesforce.com/006XX000004Ci1w")
+	if rec != "006XX000004Ci1w" {
+		t.Errorf("record = %q, want the 15-char id", rec)
+	}
+	if _, ok := f["object"]; ok {
+		t.Errorf("classic url carries no object hint, got %v", f)
+	}
+}
+
+func TestParseSalesforceUnparseable(t *testing.T) {
+	if rec, _ := parseSalesforce("https://myorg.lightning.force.com/lightning/o/Account/list"); rec != "" {
+		t.Errorf("record = %q, want empty for a non-record salesforce url", rec)
+	}
+}
+
 func TestParseDrive(t *testing.T) {
 	rec, _ := parseDrive("https://docs.google.com/document/d/1AbC_dEF/edit")
 	if rec != "1AbC_dEF" {
