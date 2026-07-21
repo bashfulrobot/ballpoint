@@ -18,9 +18,9 @@ var ErrNotImplemented = errors.New("not implemented")
 const usage = `ballpoint drives Todoist triage.
 
 Usage:
-  ballpoint                     walk the triage queue
-  ballpoint probe [--benchmark] refresh freshness data
-  ballpoint dispatch            run queued work
+  ballpoint                              walk the triage queue
+  ballpoint probe [--dry-run] [--benchmark]  refresh freshness data
+  ballpoint dispatch                     run queued work
 
 Flags:
   --version   print the build version and exit
@@ -93,9 +93,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	case "probe":
 		pf := flag.NewFlagSet("probe", flag.ContinueOnError)
 		pf.SetOutput(stderr)
-		// Registered so the documented live command parses as a real flag.
-		// Issue #3 wires the prefetch behind it.
-		pf.Bool("benchmark", false, "time a full prefetch against the live API and print the wall clock")
+		dryRun := pf.Bool("dry-run", false, "report planned per-system calls without probing or writing watermarks")
+		benchmark := pf.Bool("benchmark", false, "time the real pass and print the wall clock")
 
 		if err := pf.Parse(rest[1:]); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
@@ -109,7 +108,12 @@ func Run(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("probe takes no positional arguments, got %q", pf.Args())
 		}
 
-		return fmt.Errorf("probe: %w", ErrNotImplemented)
+		deps, err := resolveProbeDeps(*dryRun, *benchmark)
+		if err != nil {
+			return err
+		}
+
+		return runProbe(deps, stdout, stderr)
 	case "dispatch":
 		if len(rest) > 1 {
 			return fmt.Errorf("dispatch takes no arguments, got %q", rest[1:])

@@ -8,6 +8,7 @@ import (
 
 	"github.com/bashfulrobot/ballpoint/internal/buildinfo"
 	"github.com/bashfulrobot/ballpoint/internal/golden"
+	"github.com/bashfulrobot/ballpoint/internal/sources"
 )
 
 // Every wired but unbuilt subcommand must report ErrNotImplemented so main
@@ -19,7 +20,6 @@ func TestRunNotImplemented(t *testing.T) {
 		args []string
 	}{
 		{name: "bare invocation is the triage walk", args: []string{}},
-		{name: "probe", args: []string{"probe"}},
 		{name: "dispatch", args: []string{"dispatch"}},
 	}
 
@@ -105,16 +105,30 @@ func TestRunUnknownCommand(t *testing.T) {
 	}
 }
 
-// probe --benchmark is still not implemented, but it must parse as a known
-// flag rather than an unknown-argument error, so the documented live command
-// is real.
-func TestRunProbeBenchmarkParses(t *testing.T) {
+// probe --dry-run extracts and groups links from tasks and reports planned
+// per-system call counts without touching the network or writing a watermark,
+// so it runs green with no credentials. It exercises runProbe with an injected
+// task source. Two slack threads in one channel collapse to one planned call.
+func TestRunProbeDryRun(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	err := Run([]string{"probe", "--benchmark"}, &stdout, &stderr)
+	tasks := []sources.Task{{
+		ID:    "1",
+		Title: "x https://kong.slack.com/archives/C1/p1699999999000100 and https://kong.slack.com/archives/C1/p1699999999000200",
+	}}
 
-	if !errors.Is(err, ErrNotImplemented) {
-		t.Errorf("Run(probe --benchmark) error = %v, want ErrNotImplemented", err)
+	err := runProbe(probeDeps{
+		tasks:    tasks,
+		dryRun:   true,
+		stateDir: t.TempDir(),
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("runProbe() error = %v", err)
+	}
+
+	got := stdout.String()
+	if !strings.Contains(got, "slack: 2 links, ~1 calls") {
+		t.Errorf("dry-run output = %q, want the two slack links collapsed to one call", got)
 	}
 }
 
