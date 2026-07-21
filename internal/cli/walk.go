@@ -161,7 +161,10 @@ func pickScope(dir string) (tui.Scope, error) {
 
 	options := []huh.Option[string]{huh.NewOption("(all tasks)", "")}
 	for _, p := range projects {
-		options = append(options, huh.NewOption(p, p))
+		// The label is sanitized because project names are collaborator-controlled
+		// and the picker renders before the TUI's own sanitizing starts. The value
+		// stays raw; it is matched against the cache, not printed.
+		options = append(options, huh.NewOption(tui.SanitizeLabel(p), p))
 	}
 
 	var chosen string

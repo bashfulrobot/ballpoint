@@ -160,6 +160,11 @@ func sanitizeTerminal(s string) string { return stripControl(s, true) }
 // carrying newlines cannot inject extra lines and spoof the fixed-height header.
 func sanitizeLine(s string) string { return stripControl(s, false) }
 
+// SanitizeLabel strips control bytes from a single-line label. The CLI scope
+// picker renders collaborator-controlled project names before the TUI starts, so
+// it sanitizes each label with the same policy the header uses.
+func SanitizeLabel(s string) string { return sanitizeLine(s) }
+
 // stripControl removes C0/C1 control bytes and DEL. When keepWhitespace is true
 // tab and newline pass through (body text); otherwise they collapse to a space
 // (single-line fields).
