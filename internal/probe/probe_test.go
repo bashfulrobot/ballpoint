@@ -25,12 +25,12 @@ func TestRegistry(t *testing.T) {
 // stubProber is a minimal Prober for tests in this package.
 type stubProber struct {
 	system links.System
-	result map[string]ProbeResult
+	result map[string]Result
 	err    error
 }
 
 func (s stubProber) System() links.System { return s.system }
 
-func (s stubProber) Probe(_ context.Context, _ []links.Link, _ sources.Watermark) (map[string]ProbeResult, error) {
+func (s stubProber) Probe(_ context.Context, _ []links.Link, _ sources.Watermark) (map[string]Result, error) {
 	return s.result, s.err
 }

@@ -24,9 +24,9 @@ const (
 	ReasonUnparseable  Reason = "link could not be parsed"
 )
 
-// ProbeResult is a prober's per-link finding: a last activity time, or an
+// Result is a prober's per-link finding: a last activity time, or an
 // unchecked reason.
-type ProbeResult struct {
+type Result struct {
 	LastActivity *time.Time
 	Unchecked    bool
 	Reason       Reason
@@ -37,7 +37,7 @@ type ProbeResult struct {
 // engine, not the prober, decides Changed and writes watermarks.
 type Prober interface {
 	System() links.System
-	Probe(ctx context.Context, ls []links.Link, since sources.Watermark) (map[string]ProbeResult, error)
+	Probe(ctx context.Context, ls []links.Link, since sources.Watermark) (map[string]Result, error)
 }
 
 // Registry maps a system to its prober.
