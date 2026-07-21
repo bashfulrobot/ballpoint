@@ -4,7 +4,6 @@ package slack
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -90,24 +89,26 @@ type slackMessage struct {
 func (c *Client) Probe(ctx context.Context, ls []links.Link, since sources.Watermark) (map[string]probe.Result, error) {
 	out := make(map[string]probe.Result, len(ls))
 
-	uncheckAll := func(reason probe.Reason) map[string]probe.Result {
-		for _, l := range ls {
-			out[l.Key()] = probe.Result{Unchecked: true, Reason: reason}
-		}
-		return out
-	}
-
-	// Group links by channel.
+	// Group links by channel. A link that did not parse to a channel and thread
+	// is unchecked directly, so one bad link never becomes a channel="" API
+	// call that would poison the whole batch.
 	byChannel := map[string][]links.Link{}
 	for _, l := range ls {
-		ch := l.Fields["channel"]
+		ch, thread := l.Fields["channel"], l.Fields["thread"]
+		if ch == "" || thread == "" {
+			out[l.Key()] = probe.Result{Unchecked: true, Reason: probe.ReasonUnparseable}
+			continue
+		}
 		byChannel[ch] = append(byChannel[ch], l)
 	}
 
 	for channel, chLinks := range byChannel {
 		hist, err := c.call(ctx, "conversations.history", url.Values{"channel": {channel}})
 		if err != nil {
-			return uncheckAll(reasonFor(err)), nil
+			for _, l := range chLinks {
+				out[l.Key()] = probe.Result{Unchecked: true, Reason: reasonFor(ctx, err)}
+			}
+			continue
 		}
 
 		// Index thread parents by their ts, remembering the latest reply.
@@ -126,43 +127,52 @@ func (c *Client) Probe(ctx context.Context, ls []links.Link, since sources.Water
 
 		for _, l := range chLinks {
 			thread := l.Fields["thread"]
-			lr, ok := latest[thread]
-			if !ok {
-				// The thread was not in the recent history window; treat its
-				// last activity as the thread ts itself.
-				lr = thread
-			}
+			lr, inWindow := latest[thread]
 
-			lrTime, err := parseSlackTS(lr)
-			if err != nil {
-				out[l.Key()] = probe.Result{Unchecked: true, Reason: probe.ReasonUnparseable}
-				continue
-			}
-
-			prev, seen := since[l.Key()]
-			if seen && !lrTime.After(prev) {
-				// Not advanced; the history call already told us the freshness.
-				la := lrTime
-				out[l.Key()] = probe.Result{LastActivity: &la}
-				continue
-			}
-
-			// Advanced (or first sight): one replies call confirms the time.
-			rep, err := c.call(ctx, "conversations.replies", url.Values{"channel": {channel}, "ts": {thread}})
-			if err != nil {
-				return uncheckAll(reasonFor(err)), nil
-			}
-			la := lrTime
-			if n := len(rep.Messages); n > 0 {
-				if t, err := parseSlackTS(rep.Messages[n-1].TS); err == nil {
-					la = t
+			// A thread still inside the history window whose latest_reply has
+			// not advanced past the watermark is answered from history alone,
+			// no replies call. Every other case (advanced, first sight, or
+			// scrolled out of the window) must be confirmed against replies, so
+			// an old thread never reads as a silent no-change.
+			if inWindow {
+				lrTime, err := parseSlackTS(lr)
+				if err != nil {
+					out[l.Key()] = probe.Result{Unchecked: true, Reason: probe.ReasonUnparseable}
+					continue
+				}
+				if prev, seen := since[l.Key()]; seen && !lrTime.After(prev) {
+					la := lrTime
+					out[l.Key()] = probe.Result{LastActivity: &la}
+					continue
 				}
 			}
-			out[l.Key()] = probe.Result{LastActivity: &la}
+
+			out[l.Key()] = c.confirmThread(ctx, channel, thread)
 		}
 	}
 
 	return out, nil
+}
+
+// confirmThread fetches a thread's replies and reports the newest message time.
+// A transport or auth failure, or a thread the API returns empty, is unchecked,
+// never a false no-change.
+func (c *Client) confirmThread(ctx context.Context, channel, thread string) probe.Result {
+	rep, err := c.call(ctx, "conversations.replies", url.Values{"channel": {channel}, "ts": {thread}})
+	if err != nil {
+		return probe.Result{Unchecked: true, Reason: reasonFor(ctx, err)}
+	}
+	var newest time.Time
+	for _, m := range rep.Messages {
+		if t, err := parseSlackTS(m.TS); err == nil && t.After(newest) {
+			newest = t
+		}
+	}
+	if newest.IsZero() {
+		// The thread carried no parseable message, so freshness is unconfirmed.
+		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
+	}
+	return probe.Result{LastActivity: &newest}
 }
 
 // authError marks a Slack ok:false auth failure so Probe can map it to ReasonAuth.
@@ -170,11 +180,16 @@ type authError struct{ code string }
 
 func (e authError) Error() string { return "slack auth: " + e.code }
 
-// reasonFor maps a call error to the unchecked reason it should render.
-func reasonFor(err error) probe.Reason {
+// reasonFor maps a call error to the unchecked reason it should render. An auth
+// failure is ReasonAuth, a tripped context deadline is ReasonTimeout, and
+// anything else is a generic probe error.
+func reasonFor(ctx context.Context, err error) probe.Reason {
 	var ae authError
 	if errors.As(err, &ae) {
 		return probe.ReasonAuth
+	}
+	if ctx.Err() != nil {
+		return probe.ReasonTimeout
 	}
 	return probe.ReasonError
 }
@@ -196,14 +211,14 @@ func (c *Client) call(ctx context.Context, method string, q url.Values) (slackRe
 	if err != nil {
 		return slackResponse{}, fmt.Errorf("calling %s: %w", method, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer probe.DrainClose(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return slackResponse{}, fmt.Errorf("slack %s returned %s", method, resp.Status)
 	}
 
 	var out slackResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := probe.DecodeJSON(resp.Body, &out); err != nil {
 		return slackResponse{}, fmt.Errorf("decoding %s: %w", method, err)
 	}
 	if !out.OK {

@@ -94,6 +94,62 @@ func TestProbeCollapsesAndFetchesAdvancedOnly(t *testing.T) {
 	}
 }
 
+// A thread that scrolled out of the recent history window must still be
+// confirmed against replies, so a fresh reply is never reported as a silent
+// no-change and the watermark never regresses below the thread's real activity.
+func TestProbeConfirmsOutOfWindowThread(t *testing.T) {
+	var repliesCalls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/conversations.history":
+			// The linked thread is not in this window.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"messages": []map[string]any{
+					{"ts": "1700500000.000000", "thread_ts": "1700500000.000000",
+						"reply_count": 0, "latest_reply": "1700500000.000000"},
+				},
+			})
+		case "/conversations.replies":
+			atomic.AddInt32(&repliesCalls, 1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": true,
+				"messages": []map[string]any{
+					{"ts": "1699999999.000100"},
+					{"ts": "1700100000.000000"}, // a reply newer than the watermark
+				},
+			})
+		default:
+			http.Error(w, r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New("test-token", WithBaseURL(srv.URL))
+	ls := []links.Link{{System: links.SystemSlack, Raw: "x", Record: "C1:1699999999.000100",
+		Fields: map[string]string{"channel": "C1", "thread": "1699999999.000100"}}}
+
+	// A prior watermark behind the real latest reply. The buggy path would read
+	// the parent ts, skip replies, and regress the watermark.
+	since := sources.Watermark{"slack:C1:1699999999.000100": mustTS("1700000500.000000")}
+
+	out, err := c.Probe(context.Background(), ls, since)
+	if err != nil {
+		t.Fatalf("Probe() error = %v", err)
+	}
+	if got := atomic.LoadInt32(&repliesCalls); got != 1 {
+		t.Errorf("replies calls = %d, want 1 (out-of-window thread must be confirmed)", got)
+	}
+	r := out["slack:C1:1699999999.000100"]
+	if r.Unchecked {
+		t.Fatalf("out-of-window thread rendered unchecked: %+v", r)
+	}
+	if r.LastActivity == nil || !r.LastActivity.Equal(mustTS("1700100000.000000")) {
+		t.Errorf("last activity = %v, want the confirmed reply time 1700100000", r.LastActivity)
+	}
+}
+
 // An expired token makes every slack link unchecked with ReasonAuth, never a
 // silent no-change.
 func TestProbeExpiredTokenUnchecked(t *testing.T) {

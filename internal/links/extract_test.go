@@ -68,6 +68,22 @@ func TestExtractDedups(t *testing.T) {
 	}
 }
 
+// An Aha key inside an aha.io URL is captured once, from the URL, and not again
+// as a bare id. The URL and the bare-id scan would otherwise both claim it.
+func TestExtractNoDoubleCountInsideURL(t *testing.T) {
+	task := sources.Task{ID: "5", Title: "see https://company.aha.io/features/DEVP-I-123 please"}
+
+	n := 0
+	for _, l := range Extract(task) {
+		if l.System == SystemAha && l.Record == "DEVP-I-123" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("aha:DEVP-I-123 appeared %d times, want 1 (no bare double-count inside the URL)", n)
+	}
+}
+
 // A jira bare key and an aha idea key are distinguished: aha keys carry -I- and
 // must not be miscategorised as jira.
 func TestExtractAhaNotJira(t *testing.T) {

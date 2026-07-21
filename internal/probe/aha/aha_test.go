@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/bashfulrobot/ballpoint/internal/links"
@@ -12,16 +13,17 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/sources"
 )
 
-func TestProbeParsesUpdatedSince(t *testing.T) {
+func TestProbeQueriesByReference(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Errorf("auth = %q, want Bearer test-token", got)
 		}
+		if !strings.HasSuffix(r.URL.Path, "/features/GTWY-I-1484") {
+			t.Errorf("path = %q, want the per-record features path", r.URL.Path)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"features": []map[string]any{
-				{"reference_num": "GTWY-I-1484", "updated_at": "2026-07-20T09:00:00Z"},
-			},
+			"feature": map[string]any{"reference_num": "GTWY-I-1484", "updated_at": "2026-07-20T09:00:00Z"},
 		})
 	}))
 	defer srv.Close()
@@ -53,5 +55,29 @@ func TestProbeAuthUnchecked(t *testing.T) {
 	}
 	if r := out["aha:GTWY-I-1484"]; !r.Unchecked || r.Reason != probe.ReasonAuth {
 		t.Errorf("result = %+v, want unchecked with ReasonAuth", r)
+	}
+}
+
+// A record the API cannot return (404) is unchecked, never a false unchanged.
+// This is the false-negative path the engine exists to prevent.
+func TestProbeNotFoundUnchecked(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := New("test-token", WithBaseURL(srv.URL))
+	ls := []links.Link{{System: links.SystemAha, Record: "GTWY-I-9999"}}
+
+	out, err := c.Probe(context.Background(), ls, sources.Watermark{})
+	if err != nil {
+		t.Fatalf("Probe() error = %v", err)
+	}
+	r := out["aha:GTWY-I-9999"]
+	if !r.Unchecked {
+		t.Errorf("result = %+v, want unchecked for a record the API did not return", r)
+	}
+	if r.LastActivity != nil {
+		t.Error("a missing record must not carry a last activity time")
 	}
 }

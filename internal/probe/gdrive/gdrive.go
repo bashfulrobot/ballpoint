@@ -1,11 +1,12 @@
-// Package gdrive probes Drive file freshness with a single modifiedTime query.
+// Package gdrive probes Drive file freshness. It queries each linked file by id
+// and reports that file's modifiedTime, so a file the API cannot confirm renders
+// unchecked rather than a false unchanged.
 package gdrive
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -46,69 +47,57 @@ func New(token string, opts ...Option) *Client {
 // System identifies this prober.
 func (c *Client) System() links.System { return links.SystemGDrive }
 
-// driveResponse is the subset of the files list this prober decodes.
-type driveResponse struct {
-	Files []struct {
-		ID           string `json:"id"`
-		ModifiedTime string `json:"modifiedTime"`
-	} `json:"files"`
+// driveFile is the subset of a single file response this prober decodes.
+type driveFile struct {
+	ModifiedTime string `json:"modifiedTime"`
 }
 
-// Probe fetches files with their modifiedTime and maps each requested file id
-// to it. A non-2xx makes every link unchecked.
+// Probe queries each linked file for its modifiedTime. Any file it cannot
+// positively confirm renders unchecked, never a false unchanged.
 func (c *Client) Probe(ctx context.Context, ls []links.Link, _ sources.Watermark) (map[string]probe.Result, error) {
+	out := make(map[string]probe.Result, len(ls))
+	for _, l := range ls {
+		out[l.Key()] = c.probeOne(ctx, l)
+	}
+	return out, nil
+}
+
+// probeOne fetches one file's modifiedTime.
+func (c *Client) probeOne(ctx context.Context, l links.Link) probe.Result {
+	if l.Record == "" {
+		return probe.Result{Unchecked: true, Reason: probe.ReasonUnparseable}
+	}
 	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, err
+		return probe.Result{Unchecked: true, Reason: probe.ReasonFromCtx(ctx)}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/files?fields=files(id,modifiedTime)", nil)
+	target := c.baseURL + "/files/" + url.PathEscape(l.Record) + "?fields=modifiedTime"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return nil, fmt.Errorf("building drive request: %w", err)
+		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return uncheck(ls, probe.ReasonError), nil
+		return probe.Result{Unchecked: true, Reason: probe.ReasonFromCtx(ctx)}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer probe.DrainClose(resp.Body)
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return uncheck(ls, probe.ReasonAuth), nil
+		return probe.Result{Unchecked: true, Reason: probe.ReasonAuth}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return uncheck(ls, probe.ReasonError), nil
+		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
 	}
 
-	var body driveResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return uncheck(ls, probe.ReasonError), nil
+	var body driveFile
+	if err := probe.DecodeJSON(resp.Body, &body); err != nil {
+		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
 	}
-
-	updated := map[string]time.Time{}
-	for _, f := range body.Files {
-		if t, err := time.Parse(time.RFC3339, f.ModifiedTime); err == nil {
-			updated[f.ID] = t
-		}
+	t, err := time.Parse(time.RFC3339, body.ModifiedTime)
+	if err != nil {
+		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
 	}
-
-	out := make(map[string]probe.Result, len(ls))
-	for _, l := range ls {
-		if t, ok := updated[l.Record]; ok {
-			tt := t
-			out[l.Key()] = probe.Result{LastActivity: &tt}
-		} else {
-			out[l.Key()] = probe.Result{}
-		}
-	}
-	return out, nil
-}
-
-// uncheck marks every link unchecked with a reason.
-func uncheck(ls []links.Link, reason probe.Reason) map[string]probe.Result {
-	out := make(map[string]probe.Result, len(ls))
-	for _, l := range ls {
-		out[l.Key()] = probe.Result{Unchecked: true, Reason: reason}
-	}
-	return out
+	return probe.Result{LastActivity: &t}
 }

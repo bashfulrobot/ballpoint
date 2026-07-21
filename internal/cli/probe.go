@@ -108,7 +108,9 @@ func dryRunPlan(tasks []sources.Task, stdout io.Writer) error {
 		for _, l := range links.Extract(task) {
 			records[l.System]++
 			if l.System == links.SystemSlack {
-				channels[l.Fields["channel"]] = true
+				if ch := l.Fields["channel"]; ch != "" {
+					channels[ch] = true
+				}
 			}
 		}
 	}

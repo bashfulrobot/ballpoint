@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/bashfulrobot/ballpoint/internal/links"
@@ -12,14 +13,13 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/sources"
 )
 
-func TestProbeParsesModifiedTime(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+func TestProbeQueriesFileByID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/files/1AbC_dEF") {
+			t.Errorf("path = %q, want the per-file path", r.URL.Path)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"files": []map[string]any{
-				{"id": "1AbC_dEF", "modifiedTime": "2026-07-20T09:00:00Z"},
-			},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]any{"modifiedTime": "2026-07-20T09:00:00Z"})
 	}))
 	defer srv.Close()
 
@@ -47,5 +47,22 @@ func TestProbeAuthUnchecked(t *testing.T) {
 	out, _ := c.Probe(context.Background(), ls, sources.Watermark{})
 	if r := out["gdrive:1AbC_dEF"]; !r.Unchecked || r.Reason != probe.ReasonAuth {
 		t.Errorf("result = %+v, want unchecked with ReasonAuth", r)
+	}
+}
+
+// A file the API cannot return (404) is unchecked, never a false unchanged.
+func TestProbeNotFoundUnchecked(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := New("test-token", WithBaseURL(srv.URL))
+	ls := []links.Link{{System: links.SystemGDrive, Record: "1missing"}}
+
+	out, _ := c.Probe(context.Background(), ls, sources.Watermark{})
+	r := out["gdrive:1missing"]
+	if !r.Unchecked || r.LastActivity != nil {
+		t.Errorf("result = %+v, want unchecked with no last activity", r)
 	}
 }

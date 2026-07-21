@@ -128,6 +128,9 @@ func Run(ctx context.Context, tasks []sources.Task, since sources.Watermark, reg
 			} else {
 				lf.LastActivity = res.LastActivity
 				if res.LastActivity != nil {
+					// Strict After: activity exactly at the baseline (the newest
+					// work-log comment, or UpdatedAt when there is none) counts
+					// as already logged, so re-running does not re-flag it.
 					lf.Changed = res.LastActivity.After(baseline)
 					next[l.Key()] = *res.LastActivity
 				}

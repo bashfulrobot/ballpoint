@@ -1,11 +1,12 @@
-// Package aha probes Aha record freshness with a single updated-since query.
+// Package aha probes Aha record freshness. It queries each linked record by its
+// reference key and reports that record's absolute last-updated time, so a
+// record the API cannot confirm renders unchecked rather than a false unchanged.
 package aha
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -46,71 +47,60 @@ func New(token string, opts ...Option) *Client {
 // System identifies this prober.
 func (c *Client) System() links.System { return links.SystemAha }
 
-// ahaResponse is the subset of the Aha features response this prober decodes.
+// ahaResponse is the subset of a single Aha feature response this prober
+// decodes.
 type ahaResponse struct {
-	Features []struct {
-		Reference string `json:"reference_num"`
+	Feature struct {
 		UpdatedAt string `json:"updated_at"`
-	} `json:"features"`
+	} `json:"feature"`
 }
 
-// Probe fetches records updated since the epoch, then maps each requested link
-// to its update time. A non-2xx makes every link unchecked.
+// Probe queries each linked record for its last-updated time. Any record it
+// cannot positively confirm renders unchecked, never a false unchanged.
 func (c *Client) Probe(ctx context.Context, ls []links.Link, _ sources.Watermark) (map[string]probe.Result, error) {
+	out := make(map[string]probe.Result, len(ls))
+	for _, l := range ls {
+		out[l.Key()] = c.probeOne(ctx, l)
+	}
+	return out, nil
+}
+
+// probeOne fetches one record's updated_at.
+func (c *Client) probeOne(ctx context.Context, l links.Link) probe.Result {
+	if l.Record == "" {
+		return probe.Result{Unchecked: true, Reason: probe.ReasonUnparseable}
+	}
 	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, err
+		return probe.Result{Unchecked: true, Reason: probe.ReasonFromCtx(ctx)}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/features?updated_since=1970-01-01", nil)
+	target := c.baseURL + "/features/" + url.PathEscape(l.Record)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return nil, fmt.Errorf("building aha request: %w", err)
+		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return uncheck(ls, probe.ReasonError), nil
+		return probe.Result{Unchecked: true, Reason: probe.ReasonFromCtx(ctx)}
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer probe.DrainClose(resp.Body)
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return uncheck(ls, probe.ReasonAuth), nil
+		return probe.Result{Unchecked: true, Reason: probe.ReasonAuth}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return uncheck(ls, probe.ReasonError), nil
+		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
 	}
 
 	var body ahaResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return uncheck(ls, probe.ReasonError), nil
+	if err := probe.DecodeJSON(resp.Body, &body); err != nil {
+		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
 	}
-
-	updated := map[string]time.Time{}
-	for _, f := range body.Features {
-		if t, err := time.Parse(time.RFC3339, f.UpdatedAt); err == nil {
-			updated[f.Reference] = t
-		}
+	t, err := time.Parse(time.RFC3339, body.Feature.UpdatedAt)
+	if err != nil {
+		return probe.Result{Unchecked: true, Reason: probe.ReasonError}
 	}
-
-	out := make(map[string]probe.Result, len(ls))
-	for _, l := range ls {
-		if t, ok := updated[l.Record]; ok {
-			tt := t
-			out[l.Key()] = probe.Result{LastActivity: &tt}
-		} else {
-			// Not in the updated set means no activity newer than known, which
-			// the engine reads as unchanged.
-			out[l.Key()] = probe.Result{}
-		}
-	}
-	return out, nil
-}
-
-// uncheck marks every link unchecked with a reason.
-func uncheck(ls []links.Link, reason probe.Reason) map[string]probe.Result {
-	out := make(map[string]probe.Result, len(ls))
-	for _, l := range ls {
-		out[l.Key()] = probe.Result{Unchecked: true, Reason: reason}
-	}
-	return out
+	return probe.Result{LastActivity: &t}
 }

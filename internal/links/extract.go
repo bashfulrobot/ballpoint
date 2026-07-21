@@ -44,22 +44,27 @@ func Extract(task sources.Task) []Link {
 		add(categoriseURL(raw))
 	}
 
-	// Bare identifiers. Aha keys (with -I-) are matched before Jira so the Jira
-	// pattern does not claim them.
-	for _, m := range ahaKey.FindAllString(text, -1) {
+	// Bare identifiers are scanned over the text with URLs blanked out, so an id
+	// that already appears inside a harvested URL (an Aha key in an aha.io link,
+	// a record id in a permalink) is not counted a second time as a bare match.
+	bare := urlRe.ReplaceAllString(text, " ")
+
+	// Aha keys (with -I-) are matched before Jira so the Jira pattern does not
+	// claim them.
+	for _, m := range ahaKey.FindAllString(bare, -1) {
 		rec, f := parseAha(m)
 		add(Link{System: SystemAha, Raw: m, Record: rec, Fields: f})
 	}
-	for _, m := range jiraRe.FindAllString(text, -1) {
+	for _, m := range jiraRe.FindAllString(bare, -1) {
 		if strings.Contains(m, "-I-") {
 			continue
 		}
 		add(Link{System: SystemJira, Raw: m, Record: m})
 	}
-	for _, m := range sfidRe.FindAllString(text, -1) {
+	for _, m := range sfidRe.FindAllString(bare, -1) {
 		add(Link{System: SystemSalesforce, Raw: m, Record: m})
 	}
-	for _, m := range caseRe.FindAllString(text, -1) {
+	for _, m := range caseRe.FindAllString(bare, -1) {
 		add(Link{System: SystemSalesforce, Raw: m, Record: strings.TrimPrefix(m, "Case ")})
 	}
 
