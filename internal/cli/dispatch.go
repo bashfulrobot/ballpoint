@@ -12,6 +12,7 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/dispatch"
 	"github.com/bashfulrobot/ballpoint/internal/probe"
 	"github.com/bashfulrobot/ballpoint/internal/queue"
+	"github.com/bashfulrobot/ballpoint/internal/sanitize"
 	"github.com/bashfulrobot/ballpoint/internal/store"
 	"github.com/bashfulrobot/ballpoint/internal/tui"
 )
@@ -115,9 +116,12 @@ func runDispatch(deps dispatchDeps, stdout, _ io.Writer) error {
 			return nil
 		}
 		for _, s := range statuses {
-			line := fmt.Sprintf("%s\t%s", s.TaskID, s.State)
+			// TaskID and Detail can carry model or queue derived text (a parse
+			// error echoing model output, a tampered id), so both are sanitized
+			// before they reach the operator's terminal.
+			line := fmt.Sprintf("%s\t%s", sanitize.Line(s.TaskID), s.State)
 			if s.Detail != "" {
-				line += "\t" + s.Detail
+				line += "\t" + sanitize.Line(s.Detail)
 			}
 			_, _ = fmt.Fprintln(stdout, line)
 		}

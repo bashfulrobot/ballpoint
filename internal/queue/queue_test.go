@@ -1,6 +1,8 @@
 package queue
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -65,6 +67,57 @@ func TestLoadEmpty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("Load() = %d, want 0", len(got))
+	}
+}
+
+// Append and Remove run from separate processes (the TUI and the dispatcher)
+// while a walk is in flight, so an append must never be lost to a concurrent
+// rewriting drain. Seed a set of entries, then concurrently append fresh ones
+// while draining every seed. The queue must end holding exactly the appended
+// entries, none clobbered by a racing Remove.
+func TestConcurrentAppendAndRemoveLosesNothing(t *testing.T) {
+	root := t.TempDir()
+	const n = 40
+	seeds := make(map[string]bool, n)
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("seed-%d", i)
+		seeds[id] = true
+		if err := Append(root, Entry{ID: id, TaskID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(2)
+		id := fmt.Sprintf("seed-%d", i)
+		fresh := fmt.Sprintf("fresh-%d", i)
+		go func() {
+			defer wg.Done()
+			if err := Append(root, Entry{ID: fresh, TaskID: fresh}); err != nil {
+				t.Errorf("append: %v", err)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if _, err := Remove(root, map[string]bool{id: true}); err != nil {
+				t.Errorf("remove: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	got, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Fatalf("queue holds %d entries, want %d (a concurrent append was lost)", len(got), n)
+	}
+	for _, e := range got {
+		if seeds[e.ID] {
+			t.Errorf("seed %q survived the drain", e.ID)
+		}
 	}
 }
 

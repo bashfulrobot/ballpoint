@@ -21,10 +21,10 @@ var draftChannels = map[string]bool{"nudge": true, "email": true, "teams": true}
 // WorklogArgv builds the td_worklog.sh invocation that records an assessment.
 // The entry, next step, and verb come from the model, so they are sanitized and
 // the verb is coerced to a safe token (defaulting to "note"). Links become
-// repeated --link "label=url" flags; a link is only included when its URL is
-// http or https, and any "=" in the label is dropped so the single-delimiter
-// contract with the script is not ambiguous. A non-empty next step becomes
-// --next.
+// repeated --link "label=url" flags; a link is only included when its URL is a
+// clean http or https URL (see safeURL), and any "=" in the label is dropped so
+// the single-delimiter contract with the script is not ambiguous. A non-empty
+// next step becomes --next.
 func WorklogArgv(scriptsDir, ref string, a Assessment) []string {
 	argv := []string{
 		filepath.Join(scriptsDir, "td_worklog.sh"),
@@ -33,7 +33,7 @@ func WorklogArgv(scriptsDir, ref string, a Assessment) []string {
 		"--verb", safeVerb(a.Verb),
 	}
 	for _, l := range a.Links {
-		if !isHTTPURL(l.URL) {
+		if !safeURL(l.URL) {
 			continue
 		}
 		label := sanitize.Line(strings.ReplaceAll(l.Label, "=", " "))
@@ -43,6 +43,17 @@ func WorklogArgv(scriptsDir, ref string, a Assessment) []string {
 		argv = append(argv, "--next", next)
 	}
 	return argv
+}
+
+// safeURL reports whether raw is an http or https URL that carries no rune the
+// sanitizer would strip. url.Parse accepts multibyte bidi and zero-width runes,
+// so a scheme check alone would let a crafted URL (for example one with a
+// U+202E override or a zero-width character) ride into the work log and render
+// deceptively in a Todoist client, which does not run this sanitizer. Requiring
+// the URL to survive sanitize.Line unchanged closes that gap; a real URL never
+// contains those runes, so nothing legitimate is dropped.
+func safeURL(raw string) bool {
+	return isHTTPURL(raw) && sanitize.Line(raw) == raw
 }
 
 // safeVerb coerces a model-supplied verb to a lowercase-letter token, defaulting

@@ -58,6 +58,21 @@ func TestStripsZeroWidthAndBOM(t *testing.T) {
 	}
 }
 
+// The Unicode line and paragraph separators must not survive in a single-line
+// field and must normalize to a newline in a block, so they cannot act as a
+// hidden line break in a downstream renderer.
+func TestStripsLineAndParagraphSeparators(t *testing.T) {
+	for _, r := range []rune{0x2028, 0x2029} {
+		in := "one" + string(r) + "two"
+		if got := Line(in); got != "one two" {
+			t.Errorf("Line did not collapse %U: got %q", r, got)
+		}
+		if got := Block(in); got != "one\ntwo" {
+			t.Errorf("Block did not normalize %U to newline: got %q", r, got)
+		}
+	}
+}
+
 func TestKeepsOrdinaryUnicode(t *testing.T) {
 	in := "café résumé 日本語 emoji 🙂"
 	if got := Block(in); got != in {

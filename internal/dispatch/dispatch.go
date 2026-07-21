@@ -11,6 +11,7 @@ import (
 
 	"github.com/bashfulrobot/ballpoint/internal/probe"
 	"github.com/bashfulrobot/ballpoint/internal/queue"
+	"github.com/bashfulrobot/ballpoint/internal/sanitize"
 	"github.com/bashfulrobot/ballpoint/internal/store"
 )
 
@@ -124,7 +125,11 @@ func groupByTask(entries []queue.Entry) []taskGroup {
 			continue
 		}
 		index[e.TaskID] = len(groups)
-		groups = append(groups, taskGroup{id: e.TaskID, ref: "id:" + e.TaskID, entries: []queue.Entry{e}})
+		// The ref crosses into the writeback script argv and is printed on a dry
+		// run, so the id is sanitized before it is wrapped. A real Todoist id is
+		// numeric and unchanged; a tampered queue id cannot carry escape bytes
+		// into the terminal or the script.
+		groups = append(groups, taskGroup{id: e.TaskID, ref: "id:" + sanitize.Line(e.TaskID), entries: []queue.Entry{e}})
 	}
 	return groups
 }
@@ -233,9 +238,12 @@ func plural(n int) string {
 // what prints is exactly what a real run would send, already sanitized.
 func runDry(cfg Config, groups []taskGroup) (Summary, error) {
 	for _, g := range groups {
+		// g.id addresses the cache and report by exact key, so those lookups use
+		// the raw id; only the terminal echo is sanitized.
+		safeID := sanitize.Line(g.id)
 		task, ok, err := cfg.Store.LoadTask(g.id)
 		if err != nil || !ok {
-			_, _ = fmt.Fprintf(cfg.Stdout, "task %s: not in cache, would fail\n\n", g.id)
+			_, _ = fmt.Fprintf(cfg.Stdout, "task %s: not in cache, would fail\n\n", safeID)
 			continue
 		}
 		nonce, err := newNonce()
@@ -243,8 +251,8 @@ func runDry(cfg Config, groups []taskGroup) (Summary, error) {
 			return Summary{}, err
 		}
 		prompt := BuildPrompt(task, cfg.Report.Tasks[g.id], nonce)
-		_, _ = fmt.Fprintf(cfg.Stdout, "=== task %s prompt ===\n%s\n", g.id, prompt)
-		_, _ = fmt.Fprintf(cfg.Stdout, "=== task %s planned writes ===\n", g.id)
+		_, _ = fmt.Fprintf(cfg.Stdout, "=== task %s prompt ===\n%s\n", safeID, prompt)
+		_, _ = fmt.Fprintf(cfg.Stdout, "=== task %s planned writes ===\n", safeID)
 		_, _ = fmt.Fprintf(cfg.Stdout, "worklog: %v\n", WorklogArgv(cfg.ScriptsDir, g.ref, Assessment{Summary: "<assessment>"}))
 		for _, e := range g.entries {
 			if !validChannel(e.Channel) || e.To == "" || e.Body == "" {

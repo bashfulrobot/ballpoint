@@ -60,6 +60,19 @@ func TestDecodeCLIResultOtherError(t *testing.T) {
 	}
 }
 
+// The error text carries model-derived Result, which surfaces on --status, so
+// control bytes in it must be stripped before they can reach the terminal.
+func TestDecodeCLIResultErrorSanitizesResult(t *testing.T) {
+	env := cliResult{IsError: true, Result: "boom\x1b[2Jcleared"}
+	_, _, err := assessmentFromEnvelope(env)
+	if err == nil {
+		t.Fatal("err = nil, want an error")
+	}
+	if strings.ContainsRune(err.Error(), 0x1b) {
+		t.Errorf("error kept a control byte: %q", err)
+	}
+}
+
 func TestParseAssessmentExtractsFromProse(t *testing.T) {
 	raw := "Sure, here is the assessment:\n{\"summary\":\"looks done\"}\nLet me know if you need more."
 	a, err := ParseAssessment(raw)

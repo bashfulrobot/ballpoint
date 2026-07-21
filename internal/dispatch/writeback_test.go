@@ -66,6 +66,25 @@ func TestWorklogArgvDropsNonHTTPLinks(t *testing.T) {
 	})
 }
 
+// url.Parse accepts multibyte bidi and zero-width runes, so a scheme check alone
+// would let a crafted URL ride into the work log and render deceptively in a
+// Todoist client. A URL carrying such a rune is dropped.
+func TestWorklogArgvDropsURLWithHiddenRunes(t *testing.T) {
+	a := Assessment{
+		Summary: "x",
+		Links: []Link{
+			{Label: "clean", URL: "https://h/ok"},
+			{Label: "bidi", URL: "https://h/\u202egnp.exe"},
+			{Label: "zerowidth", URL: "https://h/\u200bevil"},
+		},
+	}
+	got := WorklogArgv("/s", "id:1", a)
+	eq(t, got, []string{
+		"/s/td_worklog.sh", "id:1", "--entry", "x", "--verb", "note",
+		"--link", "clean=https://h/ok",
+	})
+}
+
 // A label carrying "=" would make "label=url" ambiguous to the single-delimiter
 // script contract, so the "=" is dropped before the join.
 func TestWorklogArgvStripsEqualsFromLabel(t *testing.T) {

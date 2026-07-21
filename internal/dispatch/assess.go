@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/bashfulrobot/ballpoint/internal/sanitize"
 )
 
 // ErrUsageLimit is returned by an assessor when the subscription usage or rate
@@ -102,7 +104,7 @@ func assessmentFromEnvelope(env cliResult) (Assessment, float64, error) {
 		if env.APIErrorStatus != nil && *env.APIErrorStatus == 429 {
 			return Assessment{}, env.TotalCostUSD, ErrUsageLimit
 		}
-		return Assessment{}, env.TotalCostUSD, fmt.Errorf("claude reported an error: %s", env.Result)
+		return Assessment{}, env.TotalCostUSD, fmt.Errorf("claude reported an error: %s", sanitize.Line(env.Result))
 	}
 	a, err := ParseAssessment(env.Result)
 	if err != nil {
