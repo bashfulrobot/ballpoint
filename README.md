@@ -8,16 +8,16 @@ keeps long jobs from blocking the walk.
 
 ## Status
 
-The data layer and the freshness probe are built. The remaining subcommands
-are still wired to return `not implemented`.
+Every component is built: the data layer, the freshness probe, the triage
+TUI, the dispatcher, and the prewarm timer.
 
 | Component | Issue | State |
 | --- | --- | --- |
 | Source interface and Todoist HTTP client | #2 | Done |
 | Freshness probe engine | #3 | Done |
-| Prewarm timer as a home-manager module | #4 | Wired, not implemented |
-| Triage walk TUI | #5 | Wired, not implemented |
-| Dispatcher | #6 | Wired, not implemented |
+| Prewarm timer as a home-manager module | #4 | Done |
+| Triage walk TUI | #5 | Done |
+| Dispatcher | #6 | Done |
 
 ## Usage
 
@@ -36,9 +36,6 @@ ballpoint --version                        print the build version
 --secrets-path PATH    off-store secrets file (default ~/.config/nixos-secrets/secrets.json)
 --concurrency N        bounded Todoist fetch concurrency (default 12)
 ```
-
-The still-unimplemented subcommands exit non-zero, so the systemd timer in
-issue #4 cannot record success for work that never ran.
 
 ## Sources
 
