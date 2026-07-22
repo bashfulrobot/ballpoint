@@ -150,7 +150,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 			return nil
 		}
 
-		deps, err := resolveProbeDeps(f)
+		deps, err := resolveProbeDeps(f, stderr)
 		if err != nil {
 			return err
 		}

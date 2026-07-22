@@ -12,12 +12,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/bashfulrobot/ballpoint/internal/probe"
 )
 
 // defaultTokenURL is Google's OAuth2 token endpoint. Overridable in tests.
@@ -122,10 +123,7 @@ func (s *Source) exchange(ctx context.Context, cred authorizedUser) (string, err
 	if err != nil {
 		return "", fmt.Errorf("token exchange request: %w", err)
 	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-	}()
+	defer probe.DrainClose(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("token exchange: status %d", resp.StatusCode)
@@ -133,7 +131,7 @@ func (s *Source) exchange(ctx context.Context, cred authorizedUser) (string, err
 	var body struct {
 		AccessToken string `json:"access_token"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := probe.DecodeJSON(resp.Body, &body); err != nil {
 		return "", fmt.Errorf("decoding token response: %w", err)
 	}
 	if body.AccessToken == "" {
