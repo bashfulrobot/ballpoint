@@ -7,6 +7,7 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/probe"
 	"github.com/bashfulrobot/ballpoint/internal/probe/aha"
 	"github.com/bashfulrobot/ballpoint/internal/probe/gdrive"
+	"github.com/bashfulrobot/ballpoint/internal/probe/github"
 	"github.com/bashfulrobot/ballpoint/internal/probe/gmail"
 	"github.com/bashfulrobot/ballpoint/internal/probe/salesforce"
 	"github.com/bashfulrobot/ballpoint/internal/probe/slack"
@@ -25,6 +26,9 @@ type Credentials struct {
 	// Salesforce is true when the sf CLI is available. Salesforce auth lives in
 	// the CLI's own store, not this off-store secrets file, so there is no token.
 	Salesforce bool
+	// GitHub is true when the gh CLI is available. GitHub auth lives in the CLI's
+	// own store, not this off-store secrets file, so there is no token.
+	GitHub bool
 }
 
 // Build registers a prober for each system whose credential is present.
@@ -42,6 +46,9 @@ func Build(c Credentials) *probe.Registry {
 	}
 	if c.Salesforce {
 		reg.Register(salesforce.New())
+	}
+	if c.GitHub {
+		reg.Register(github.New())
 	}
 	return reg
 }

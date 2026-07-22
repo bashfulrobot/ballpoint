@@ -88,3 +88,50 @@ func TestParseDrive(t *testing.T) {
 		t.Errorf("record = %q, want the file id 1AbC_dEF", rec)
 	}
 }
+
+func TestParseGitHubIssuePullCommit(t *testing.T) {
+	cases := []struct {
+		name     string
+		url      string
+		wantRec  string
+		wantKind string
+		wantID   string
+	}{
+		{"issue", "https://github.com/bashfulrobot/ballpoint/issues/45", "bashfulrobot/ballpoint/issue/45", "issue", "45"},
+		{"pull", "https://github.com/bashfulrobot/ballpoint/pull/12", "bashfulrobot/ballpoint/pull/12", "pull", "12"},
+		{"pull files tab", "https://github.com/bashfulrobot/ballpoint/pull/12/files", "bashfulrobot/ballpoint/pull/12", "pull", "12"},
+		{"commit", "https://github.com/bashfulrobot/ballpoint/commit/abcdef0123456789", "bashfulrobot/ballpoint/commit/abcdef0123456789", "commit", "abcdef0123456789"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, f := parseGitHub(tc.url)
+			if rec != tc.wantRec {
+				t.Errorf("record = %q, want %q", rec, tc.wantRec)
+			}
+			if f["kind"] != tc.wantKind {
+				t.Errorf("kind = %q, want %q", f["kind"], tc.wantKind)
+			}
+			if f["id"] != tc.wantID {
+				t.Errorf("id = %q, want %q", f["id"], tc.wantID)
+			}
+			if f["owner"] != "bashfulrobot" || f["repo"] != "ballpoint" {
+				t.Errorf("owner/repo = %q/%q, want bashfulrobot/ballpoint", f["owner"], f["repo"])
+			}
+		})
+	}
+}
+
+func TestParseGitHubUnparseable(t *testing.T) {
+	for _, u := range []string{
+		"https://github.com/bashfulrobot/ballpoint",                   // repo root
+		"https://github.com/bashfulrobot/ballpoint/wiki/Home",         // wiki
+		"https://github.com/bashfulrobot",                             // owner only
+		"https://github.com/bashfulrobot/ballpoint/releases/tag/v1",   // release
+		"https://github.com/bashfulrobot/ballpoint/issues/notanumber", // bad id
+		"https://github.com/bashfulrobot/ballpoint/commit/xyz",        // non-hex sha
+	} {
+		if rec, _ := parseGitHub(u); rec != "" {
+			t.Errorf("record = %q, want empty for %q", rec, u)
+		}
+	}
+}

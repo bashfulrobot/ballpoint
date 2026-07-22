@@ -18,6 +18,13 @@ var (
 	// URL (a frontdoor token, a session parameter), which would mint a bogus
 	// record and cost a wasted query.
 	sfRecordID = regexp.MustCompile(`^https?://[^/]+/([0-9A-Za-z]{15,18})(?:[/?#]|$)`)
+	// GitHub record-part charsets. owner is a login (no dots or underscores),
+	// repo also admits dot and underscore, a number is the issue or PR id, and a
+	// sha is a 7-to-40 char hex commit id.
+	ghOwner  = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]*)$`)
+	ghRepo   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	ghNumber = regexp.MustCompile(`^[0-9]+$`)
+	ghSha    = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 )
 
 // slackTS turns Slack's p-form (p1699999999000100) into a ts
@@ -76,6 +83,46 @@ func parseSalesforce(raw string) (string, map[string]string) {
 		return m[1], map[string]string{"record": m[1]}
 	}
 	return "", nil
+}
+
+// parseGitHub returns the record "<owner>/<repo>/<kind>/<id>" for an issue, pull
+// request, or commit URL, where kind is normalized to issue, pull, or commit.
+// Any other GitHub URL (a repo root, a wiki page, a raw file, a release) returns
+// an empty record. Every part is charset validated here so a record that reaches
+// the prober is safe to splice into a gh api path.
+func parseGitHub(raw string) (string, map[string]string) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", nil
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 4 {
+		return "", nil
+	}
+	owner, repo, seg, id := parts[0], parts[1], parts[2], parts[3]
+	var kind string
+	switch seg {
+	case "issues":
+		kind = "issue"
+	case "pull":
+		kind = "pull"
+	case "commit":
+		kind = "commit"
+	default:
+		return "", nil
+	}
+	if !ghOwner.MatchString(owner) || !ghRepo.MatchString(repo) {
+		return "", nil
+	}
+	if kind == "commit" {
+		if !ghSha.MatchString(id) {
+			return "", nil
+		}
+	} else if !ghNumber.MatchString(id) {
+		return "", nil
+	}
+	rec := owner + "/" + repo + "/" + kind + "/" + id
+	return rec, map[string]string{"owner": owner, "repo": repo, "kind": kind, "id": id}
 }
 
 // parseDrive returns the Drive file id from a docs or drive permalink.

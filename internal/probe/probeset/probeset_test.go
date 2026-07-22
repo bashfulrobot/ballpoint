@@ -44,6 +44,20 @@ func TestBuildSalesforceOnAvailability(t *testing.T) {
 	}
 }
 
+// The GitHub prober registers on the availability flag, not a token: its auth
+// lives in the gh CLI's own store.
+func TestBuildGitHubOnAvailability(t *testing.T) {
+	reg := Build(Credentials{GitHub: true})
+	if _, ok := reg.For(links.SystemGitHub); !ok {
+		t.Error("github prober not registered despite GitHub=true")
+	}
+
+	reg2 := Build(Credentials{})
+	if _, ok := reg2.For(links.SystemGitHub); ok {
+		t.Error("github prober registered when GitHub=false")
+	}
+}
+
 // A google token registers both Gmail and Drive, since they share it.
 func TestBuildGoogleSharesToken(t *testing.T) {
 	reg := Build(Credentials{Google: "test-token"})
