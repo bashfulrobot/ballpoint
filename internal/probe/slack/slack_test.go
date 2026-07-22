@@ -226,6 +226,55 @@ func TestProbeResolvesCredsByLinkHost(t *testing.T) {
 	}
 }
 
+// The finding-1 hazard: two links sharing a channel ID across different
+// workspaces must not merge into one call authenticated against the first link's
+// credentials. Under the old bare-ID grouping the acme link would borrow the
+// kong credentials and read as checked; with host+channel grouping it stays a
+// separate group and renders ReasonAuth.
+func TestProbeSameChannelIDDifferentWorkspacesDoNotMerge(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer xoxc-kong" {
+			t.Errorf("auth = %q, want only the kong bearer to reach the API", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"messages": []map[string]any{
+				{"ts": "1699999999.000100", "thread_ts": "1699999999.000100", "latest_reply": "1699999999.000100"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	resolve := func(host string) (Creds, bool) {
+		if host == "kong.slack.com" {
+			return Creds{Token: "xoxc-kong", Cookie: "xoxd-kong"}, true
+		}
+		return Creds{}, false
+	}
+	c := New(resolve, WithBaseURL(srv.URL))
+
+	// Channel ID C1 exists in both workspaces, with distinct thread ids so the
+	// two links have distinct keys.
+	ls := []links.Link{
+		{System: links.SystemSlack, Raw: "https://kong.slack.com/archives/C1/p1699999999000100",
+			Record: "C1:1699999999.000100", Fields: map[string]string{"channel": "C1", "thread": "1699999999.000100"}},
+		{System: links.SystemSlack, Raw: "https://acme.slack.com/archives/C1/p1699999999000200",
+			Record: "C1:1699999999.000200", Fields: map[string]string{"channel": "C1", "thread": "1699999999.000200"}},
+	}
+
+	out, err := c.Probe(context.Background(), ls, sources.Watermark{})
+	if err != nil {
+		t.Fatalf("Probe() error = %v", err)
+	}
+	if r := out["slack:C1:1699999999.000100"]; r.Unchecked {
+		t.Errorf("kong C1 unexpectedly unchecked: %+v", r)
+	}
+	if r := out["slack:C1:1699999999.000200"]; !r.Unchecked || r.Reason != probe.ReasonAuth {
+		t.Errorf("acme C1 = %+v, want unchecked with ReasonAuth (must not borrow kong creds)", r)
+	}
+}
+
 // When the resolver has no workspace for a link's host, the channel cannot be
 // authenticated, so every link is unchecked with ReasonAuth and no API call is
 // made.
