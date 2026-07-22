@@ -14,6 +14,8 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/probe/gwsauth"
 	"github.com/bashfulrobot/ballpoint/internal/probe/probeset"
 	"github.com/bashfulrobot/ballpoint/internal/probe/salesforce"
+	"github.com/bashfulrobot/ballpoint/internal/probe/slack"
+	"github.com/bashfulrobot/ballpoint/internal/probe/slackauth"
 	"github.com/bashfulrobot/ballpoint/internal/secrets"
 	"github.com/bashfulrobot/ballpoint/internal/sources"
 	"github.com/bashfulrobot/ballpoint/internal/sources/todoist"
@@ -46,7 +48,11 @@ func resolveProbeDeps(f probeFlags, stderr io.Writer) (probeDeps, error) {
 	if err != nil {
 		return probeDeps{}, err
 	}
-	deps.creds.Slack, _ = secrets.Load(path, "slack_token")
+	// Slack auth lives in the slack-token-refresh store, not this secrets file,
+	// so there is no slack_token key. slackResolver maps each link's workspace
+	// host to its xoxc/xoxd pair; a missing or unreadable store leaves the
+	// resolver nil and renders Slack unchecked.
+	deps.creds.Slack = slackResolver(stderr)
 	deps.creds.Aha, _ = secrets.Load(path, "aha_token")
 	// Google auth lives in the gws CLI's own store, not this secrets file, so
 	// there is no google_token key. googleToken mints a fresh access token for
@@ -67,6 +73,35 @@ func resolveProbeDeps(f probeFlags, stderr io.Writer) (probeDeps, error) {
 	}
 	deps.tasks = delta.Tasks
 	return deps, nil
+}
+
+// slackResolver loads the slack-token-refresh credentials store and returns a
+// resolver mapping a link's workspace host to its xoxc/xoxd pair. A missing
+// store is the normal state on a host that never ran the refresher and is
+// silent; an unreadable or malformed store warns and returns nil. A nil resolver
+// leaves the Slack prober unregistered, so Slack links render unchecked without
+// failing the run.
+func slackResolver(stderr io.Writer) slack.Resolver {
+	path, err := slackauth.DefaultPath()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: locating slack credentials failed, Slack unchecked: %v\n", err)
+		return nil
+	}
+	store, err := slackauth.Load(path)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: slack credentials unreadable, Slack unchecked: %v\n", err)
+		return nil
+	}
+	if store.Empty() {
+		return nil
+	}
+	return func(host string) (slack.Creds, bool) {
+		c, ok := store.ForHost(host)
+		if !ok {
+			return slack.Creds{}, false
+		}
+		return slack.Creds{Token: c.Token, Cookie: c.Cookie}, true
+	}
 }
 
 // secretsPathOrDefault returns the explicit path when set, otherwise the

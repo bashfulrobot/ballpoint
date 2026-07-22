@@ -156,19 +156,31 @@ its token from the same file inside the script for the same reason.
 `internal/secrets` is the loader; the value is returned to the caller and never
 logged, and no error message includes it.
 
-The probe reads one more flat key per source it can check: `slack_token` and
-`aha_token`. Each is loaded the same way, at runtime, never from the
-environment or the store, and never logged. A missing key is not fatal. That
-source's links render `unchecked` for the run instead of failing it.
+The probe reads one more flat key per source it can check: `aha_token`. It is
+loaded the same way, at runtime, never from the environment or the store, and
+never logged. A missing key is not fatal. Aha links render `unchecked` for the
+run instead of failing it.
 
-Salesforce and Google are the exceptions to the per-source token pattern. Their
-auth lives in a CLI's own store, not this secrets file. Salesforce reads the
-`sf` CLI store, so there is no `salesforce_token` key, and the prober registers
-when the `sf` binary is on PATH. Gmail and Drive read the `gws` (Google
-Workspace CLI) store, where ballpoint runs `gws auth export`, exchanges the
-stored refresh token for a short-lived access token each run, and never
-persists a `google_token`. When `gws` is absent or unauthenticated, Gmail and
-Drive links render `unchecked` like any other unregistered source.
+Gmail, Drive, Slack, and Salesforce are the exceptions to the per-source token
+pattern. Their auth lives in another tool's store, not this secrets file, so
+none has a key here.
+
+Gmail and Drive read the `gws` (Google Workspace CLI) store. Ballpoint exports
+the stored credentials through `gws`, exchanges the refresh token for a
+short-lived access token each run, and never persists a `google_token`. When
+`gws` is absent or unauthenticated, Gmail and Drive links render `unchecked`.
+
+Slack reads the browser-session credentials that `slack-token-refresh` writes to
+`~/.config/slack/credentials.json`: an xoxc token and the matching `d` cookie
+per workspace. Slack rejects the token without its cookie, so the prober sends
+both. It matches each Slack link's workspace host to a stored workspace, with a
+single stored workspace used as the fallback. When the store is absent, or holds
+no workspace for a link, that link renders `unchecked`. No credential value is
+logged or placed in an error.
+
+Salesforce reads the `sf` CLI store, so there is no `salesforce_token` key. The
+prober registers when the `sf` binary is on PATH; when it is absent, Salesforce
+links render `unchecked` like any other unregistered source.
 
 ## Benchmark
 

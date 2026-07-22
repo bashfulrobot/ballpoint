@@ -16,7 +16,10 @@ import (
 // no credential, so its prober is not registered and its links render
 // unchecked. Values are never logged.
 type Credentials struct {
-	Slack  string
+	// Slack resolves per-workspace xoxc/xoxd credentials from the
+	// slack-token-refresh store. A nil resolver means no Slack credentials, so
+	// the prober is not registered.
+	Slack  slack.Resolver
 	Aha    string
 	Google string // shared by Gmail and Drive
 	// Salesforce is true when the sf CLI is available. Salesforce auth lives in
@@ -27,7 +30,7 @@ type Credentials struct {
 // Build registers a prober for each system whose credential is present.
 func Build(c Credentials) *probe.Registry {
 	reg := &probe.Registry{}
-	if c.Slack != "" {
+	if c.Slack != nil {
 		reg.Register(slack.New(c.Slack))
 	}
 	if c.Aha != "" {

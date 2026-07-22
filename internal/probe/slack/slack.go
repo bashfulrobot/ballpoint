@@ -21,10 +21,25 @@ import (
 
 const defaultBaseURL = "https://slack.com/api"
 
+// Creds is one workspace's browser-session credential pair. Token is the xoxc
+// bearer token; Cookie is the xoxd value sent as the d cookie. Slack rejects an
+// xoxc token unless the request also carries the matching d cookie, so both
+// travel together on every call.
+type Creds struct {
+	Token  string
+	Cookie string
+}
+
+// Resolver returns the credential pair for a Slack link's host (for example
+// "kong.slack.com"), or false when no workspace matches. A channel belongs to
+// exactly one workspace, so the prober resolves once per channel from the host
+// of a link in that channel.
+type Resolver func(host string) (Creds, bool)
+
 // Client is the Slack freshness prober.
 type Client struct {
 	baseURL string
-	token   string
+	resolve Resolver
 	http    *http.Client
 	limiter *rate.Limiter
 }
@@ -38,12 +53,13 @@ func WithBaseURL(u string) Option { return func(c *Client) { c.baseURL = u } }
 // WithHTTPClient overrides the http.Client.
 func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.http = h } }
 
-// New builds a Slack prober. The limiter is sized to Slack's Tier 3 ceiling of
-// roughly 50 requests per minute.
-func New(token string, opts ...Option) *Client {
+// New builds a Slack prober. The resolver supplies per-workspace credentials,
+// sourced from the slack-token-refresh store rather than a static token. The
+// limiter is sized to Slack's Tier 3 ceiling of roughly 50 requests per minute.
+func New(resolve Resolver, opts ...Option) *Client {
 	c := &Client{
 		baseURL: defaultBaseURL,
-		token:   token,
+		resolve: resolve,
 		http:    &http.Client{Timeout: 30 * time.Second},
 		limiter: rate.NewLimiter(rate.Every(time.Minute/50), 5),
 	}
@@ -55,6 +71,26 @@ func New(token string, opts ...Option) *Client {
 
 // System identifies this prober.
 func (c *Client) System() links.System { return links.SystemSlack }
+
+// credsFor resolves the workspace credentials for a channel from the host of one
+// of its links. Every link in a channel shares a workspace, so the first is
+// representative.
+func (c *Client) credsFor(chLinks []links.Link) (Creds, bool) {
+	if c.resolve == nil || len(chLinks) == 0 {
+		return Creds{}, false
+	}
+	return c.resolve(hostOf(chLinks[0].Raw))
+}
+
+// hostOf returns the lowercased host of a Slack permalink, or "" if it does not
+// parse to one.
+func hostOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
 
 // parseSlackTS converts a Slack ts string ("1699999999.000100") to a time.
 func parseSlackTS(ts string) (time.Time, error) {
@@ -103,7 +139,19 @@ func (c *Client) Probe(ctx context.Context, ls []links.Link, since sources.Water
 	}
 
 	for channel, chLinks := range byChannel {
-		hist, err := c.call(ctx, "conversations.history", url.Values{"channel": {channel}})
+		// A channel belongs to one workspace, so resolve credentials once from a
+		// link's host. No workspace match means we cannot authenticate to this
+		// channel, so every link in it is unchecked with the auth reason rather
+		// than a silent no-change.
+		creds, ok := c.credsFor(chLinks)
+		if !ok {
+			for _, l := range chLinks {
+				out[l.Key()] = probe.Result{Unchecked: true, Reason: probe.ReasonAuth}
+			}
+			continue
+		}
+
+		hist, err := c.call(ctx, creds, "conversations.history", url.Values{"channel": {channel}})
 		if err != nil {
 			for _, l := range chLinks {
 				out[l.Key()] = probe.Result{Unchecked: true, Reason: reasonFor(ctx, err)}
@@ -147,7 +195,7 @@ func (c *Client) Probe(ctx context.Context, ls []links.Link, since sources.Water
 				}
 			}
 
-			out[l.Key()] = c.confirmThread(ctx, channel, thread)
+			out[l.Key()] = c.confirmThread(ctx, creds, channel, thread)
 		}
 	}
 
@@ -157,8 +205,8 @@ func (c *Client) Probe(ctx context.Context, ls []links.Link, since sources.Water
 // confirmThread fetches a thread's replies and reports the newest message time.
 // A transport or auth failure, or a thread the API returns empty, is unchecked,
 // never a false no-change.
-func (c *Client) confirmThread(ctx context.Context, channel, thread string) probe.Result {
-	rep, err := c.call(ctx, "conversations.replies", url.Values{"channel": {channel}, "ts": {thread}})
+func (c *Client) confirmThread(ctx context.Context, creds Creds, channel, thread string) probe.Result {
+	rep, err := c.call(ctx, creds, "conversations.replies", url.Values{"channel": {channel}, "ts": {thread}})
 	if err != nil {
 		return probe.Result{Unchecked: true, Reason: reasonFor(ctx, err)}
 	}
@@ -207,7 +255,7 @@ func reasonFor(ctx context.Context, err error) probe.Reason {
 
 // call performs one Slack API GET, enforces the rate limit, and decodes the
 // envelope. An ok:false with an auth error becomes an authError.
-func (c *Client) call(ctx context.Context, method string, q url.Values) (slackResponse, error) {
+func (c *Client) call(ctx context.Context, creds Creds, method string, q url.Values) (slackResponse, error) {
 	if err := c.limiter.Wait(ctx); err != nil {
 		return slackResponse{}, err
 	}
@@ -216,7 +264,10 @@ func (c *Client) call(ctx context.Context, method string, q url.Values) (slackRe
 	if err != nil {
 		return slackResponse{}, fmt.Errorf("building %s request: %w", method, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	// The xoxc token authenticates only alongside its d cookie; sending the
+	// bearer without the cookie is rejected as invalid_auth.
+	req.Header.Set("Authorization", "Bearer "+creds.Token)
+	req.Header.Set("Cookie", "d="+creds.Cookie)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
