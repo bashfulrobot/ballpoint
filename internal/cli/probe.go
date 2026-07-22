@@ -11,6 +11,7 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/config"
 	"github.com/bashfulrobot/ballpoint/internal/links"
 	"github.com/bashfulrobot/ballpoint/internal/probe"
+	"github.com/bashfulrobot/ballpoint/internal/probe/gwsauth"
 	"github.com/bashfulrobot/ballpoint/internal/probe/probeset"
 	"github.com/bashfulrobot/ballpoint/internal/probe/salesforce"
 	"github.com/bashfulrobot/ballpoint/internal/secrets"
@@ -34,7 +35,7 @@ type probeDeps struct {
 // stays testable with injected tasks. A missing per-source credential is not
 // fatal; that source renders unchecked. The Todoist token is required because
 // it provides the task corpus every run works from.
-func resolveProbeDeps(f probeFlags) (probeDeps, error) {
+func resolveProbeDeps(f probeFlags, stderr io.Writer) (probeDeps, error) {
 	dir, err := config.StateDir()
 	if err != nil {
 		return probeDeps{}, err
@@ -47,7 +48,11 @@ func resolveProbeDeps(f probeFlags) (probeDeps, error) {
 	}
 	deps.creds.Slack, _ = secrets.Load(path, "slack_token")
 	deps.creds.Aha, _ = secrets.Load(path, "aha_token")
-	deps.creds.Google, _ = secrets.Load(path, "google_token")
+	// Google auth lives in the gws CLI's own store, not this secrets file, so
+	// there is no google_token key. googleToken mints a fresh access token for
+	// this run; an absent, unauthenticated, or offline gws leaves it empty and
+	// renders Gmail and Drive unchecked.
+	deps.creds.Google = googleToken(gwsauth.New(), stderr)
 	// Salesforce auth lives in the sf CLI's own store, not this secrets file, so
 	// the prober is gated on the binary being present rather than a token.
 	deps.creds.Salesforce = salesforce.Available()
@@ -72,6 +77,33 @@ func secretsPathOrDefault(path string) (string, error) {
 		return path, nil
 	}
 	return secrets.DefaultPath()
+}
+
+// gwsTimeout bounds the whole Google token acquisition (the gws subprocess plus
+// the OAuth exchange), so a wedged CLI degrades to unchecked instead of hanging
+// the probe indefinitely.
+const gwsTimeout = 30 * time.Second
+
+// gwsAvailable is indirected so tests drive the resolution without gws on PATH.
+var gwsAvailable = gwsauth.Available
+
+// googleToken mints a Google access token from gws for this run, or "" when gws
+// is absent, unauthenticated, or unreachable, in which case Gmail and Drive
+// render unchecked. An absent gws stays silent (a common, expected setup); a
+// present-but-failing gws (a revoked token, an offline host) writes a non-fatal
+// stderr warning, so a user can tell "install gws" from "re-run gws auth login".
+func googleToken(src *gwsauth.Source, stderr io.Writer) string {
+	if !gwsAvailable() {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), gwsTimeout)
+	defer cancel()
+	tok, err := src.AccessToken(ctx)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: gws Google auth unavailable, Gmail and Drive unchecked: %v\n", err)
+		return ""
+	}
+	return tok
 }
 
 // runProbe executes the probe. In dry-run it prints the planned per-system call
