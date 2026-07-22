@@ -78,13 +78,23 @@ func Load(path string) (*Store, error) {
 	}
 
 	s := &Store{byHost: map[string]Creds{}}
+	seenHost := map[string]bool{}
 	for _, w := range parsed.Workspaces {
 		if w.XOXC == "" || w.XOXD == "" {
 			continue
 		}
 		c := Creds{Token: w.XOXC, Cookie: w.XOXD}
 		if host := hostOf(w.URL); host != "" {
-			s.byHost[host] = c
+			// Two workspaces claiming the same host are ambiguous, and map
+			// iteration order is unspecified, so rather than let the winner be a
+			// coin flip, drop the host entirely. An ambiguous host then resolves
+			// to no match instead of a random workspace's credentials.
+			if seenHost[host] {
+				delete(s.byHost, host)
+			} else {
+				s.byHost[host] = c
+				seenHost[host] = true
+			}
 		}
 		// Remember the last complete workspace; promoted to the fallback below
 		// only when exactly one complete workspace exists.
@@ -115,6 +125,15 @@ func completeCount(f credentialsFile) int {
 // "kong.slack.com"). It matches the host against each workspace's stored url,
 // then falls back to the sole workspace when only one is configured. It is
 // nil-safe so an empty Store from a missing file simply reports no match.
+//
+// The single-workspace fallback returns ok for any host, including a link to a
+// workspace the user is not authenticated to (the token is workspace-scoped, so
+// that call reads nothing and comes back as a downstream probe error rather than
+// an auth reason). The caller therefore cannot tell a real host match from the
+// one-workspace guess. That is a deliberate convenience for the common setup
+// where the stored url host may not equal the permalink subdomain (for example
+// an Enterprise Grid team url). With more than one workspace the guess is unsafe,
+// so only an exact host match resolves.
 func (s *Store) ForHost(host string) (Creds, bool) {
 	if s == nil {
 		return Creds{}, false
@@ -136,9 +155,15 @@ func (s *Store) Empty() bool {
 }
 
 // hostOf returns the lowercased host of a URL, or "" if it does not parse to one.
+// slack-token-refresh stores the workspace url with a scheme (for example
+// "https://kong.slack.com/"), but a bare host is tolerated: without a scheme
+// url.Parse would put the host in the path, so one is prepended before parsing.
 func hostOf(raw string) string {
 	if raw == "" {
 		return ""
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
 	}
 	u, err := url.Parse(raw)
 	if err != nil {

@@ -88,6 +88,41 @@ func TestLoadMultipleWorkspacesMatchByHostNoFallback(t *testing.T) {
 	}
 }
 
+// slack-token-refresh writes the url with a scheme and a trailing slash
+// (https://kong.slack.com/); a bare host with no scheme is also tolerated. Both
+// must match the permalink host. Two workspaces so the single fallback does not
+// mask a failed host extraction.
+func TestLoadToleratesUrlSchemeAndBareHost(t *testing.T) {
+	path := writeCreds(t, `{"workspaces":{
+		"kong":{"xoxc":"xoxc-k","xoxd":"xoxd-k","url":"https://kong.slack.com/"},
+		"acme":{"xoxc":"xoxc-a","xoxd":"xoxd-a","url":"acme.slack.com"}}}`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c, ok := s.ForHost("kong.slack.com"); !ok || c.Token != "xoxc-k" {
+		t.Errorf("scheme+trailing-slash url did not match host: %+v, %v", c, ok)
+	}
+	if c, ok := s.ForHost("acme.slack.com"); !ok || c.Token != "xoxc-a" {
+		t.Errorf("bare-host url did not match: %+v, %v", c, ok)
+	}
+}
+
+// Two workspaces claiming the same host are ambiguous. Rather than a coin-flip
+// winner from map iteration order, the host resolves to no match.
+func TestLoadDuplicateHostIsAmbiguous(t *testing.T) {
+	path := writeCreds(t, `{"workspaces":{
+		"a":{"xoxc":"xoxc-a","xoxd":"xoxd-a","url":"https://dup.slack.com"},
+		"b":{"xoxc":"xoxc-b","xoxd":"xoxd-b","url":"https://dup.slack.com"}}}`)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := s.ForHost("dup.slack.com"); ok {
+		t.Error("ambiguous shared host resolved to a workspace")
+	}
+}
+
 // A workspace missing either half of the pair is unusable and skipped.
 func TestLoadSkipsIncompleteWorkspace(t *testing.T) {
 	path := writeCreds(t, `{"workspaces":{"half":{"xoxc":"xoxc-only","url":"https://half.slack.com"}}}`)

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/bashfulrobot/ballpoint/internal/config"
@@ -197,6 +199,17 @@ func runProbe(deps probeDeps, stdout, stderr io.Writer) error {
 	return enc.Encode(report)
 }
 
+// slackChannelHost returns the lowercased host of a Slack permalink for the
+// dry-run call estimate, mirroring how the prober groups channels by host. An
+// unparseable link contributes an empty host, so it still groups by channel.
+func slackChannelHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
+
 // dryRunPlan prints how many calls each system would take, proving the
 // batch-by-system collapse without making any prober call. Slack collapses to
 // one history call per distinct channel; every other system is one call for the
@@ -209,7 +222,10 @@ func dryRunPlan(tasks []sources.Task, stdout io.Writer) error {
 			records[l.System]++
 			if l.System == links.SystemSlack {
 				if ch := l.Fields["channel"]; ch != "" {
-					channels[ch] = true
+					// One history call per channel per workspace, matching the
+					// prober's host+channel grouping, so a shared channel ID across
+					// two workspaces counts as two calls, not one.
+					channels[slackChannelHost(l.Raw)+"\x00"+ch] = true
 				}
 			}
 		}

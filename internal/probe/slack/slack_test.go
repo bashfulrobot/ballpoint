@@ -180,6 +180,52 @@ func TestProbeExpiredTokenUnchecked(t *testing.T) {
 	}
 }
 
+// Real permalinks from two workspaces run through the host resolver: the matched
+// workspace's credentials reach the API, and a link whose host has no workspace
+// is unchecked with ReasonAuth without borrowing the other workspace's creds.
+func TestProbeResolvesCredsByLinkHost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only the kong workspace resolves, so only its bearer may reach the API.
+		if got := r.Header.Get("Authorization"); got != "Bearer xoxc-kong" {
+			t.Errorf("auth = %q, want Bearer xoxc-kong", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"messages": []map[string]any{
+				{"ts": "1699999999.000100", "thread_ts": "1699999999.000100", "latest_reply": "1699999999.000100"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	resolve := func(host string) (Creds, bool) {
+		if host == "kong.slack.com" {
+			return Creds{Token: "xoxc-kong", Cookie: "xoxd-kong"}, true
+		}
+		return Creds{}, false
+	}
+	c := New(resolve, WithBaseURL(srv.URL))
+
+	ls := []links.Link{
+		{System: links.SystemSlack, Raw: "https://kong.slack.com/archives/C1/p1699999999000100",
+			Record: "C1:1699999999.000100", Fields: map[string]string{"channel": "C1", "thread": "1699999999.000100"}},
+		{System: links.SystemSlack, Raw: "https://acme.slack.com/archives/C2/p1699999999000100",
+			Record: "C2:1699999999.000100", Fields: map[string]string{"channel": "C2", "thread": "1699999999.000100"}},
+	}
+
+	out, err := c.Probe(context.Background(), ls, sources.Watermark{})
+	if err != nil {
+		t.Fatalf("Probe() error = %v", err)
+	}
+	if r := out["slack:C1:1699999999.000100"]; r.Unchecked {
+		t.Errorf("kong link unexpectedly unchecked: %+v", r)
+	}
+	if r := out["slack:C2:1699999999.000100"]; !r.Unchecked || r.Reason != probe.ReasonAuth {
+		t.Errorf("acme link = %+v, want unchecked with ReasonAuth", r)
+	}
+}
+
 // When the resolver has no workspace for a link's host, the channel cannot be
 // authenticated, so every link is unchecked with ReasonAuth and no API call is
 // made.

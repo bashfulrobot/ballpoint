@@ -72,14 +72,13 @@ func New(resolve Resolver, opts ...Option) *Client {
 // System identifies this prober.
 func (c *Client) System() links.System { return links.SystemSlack }
 
-// credsFor resolves the workspace credentials for a channel from the host of one
-// of its links. Every link in a channel shares a workspace, so the first is
-// representative.
-func (c *Client) credsFor(chLinks []links.Link) (Creds, bool) {
-	if c.resolve == nil || len(chLinks) == 0 {
+// resolveHost returns the workspace credentials for a link host, guarding a nil
+// resolver so a prober built without credentials simply reports no match.
+func (c *Client) resolveHost(host string) (Creds, bool) {
+	if c.resolve == nil {
 		return Creds{}, false
 	}
-	return c.resolve(hostOf(chLinks[0].Raw))
+	return c.resolve(host)
 }
 
 // hostOf returns the lowercased host of a Slack permalink, or "" if it does not
@@ -125,25 +124,31 @@ type slackMessage struct {
 func (c *Client) Probe(ctx context.Context, ls []links.Link, since sources.Watermark) (map[string]probe.Result, error) {
 	out := make(map[string]probe.Result, len(ls))
 
-	// Group links by channel. A link that did not parse to a channel and thread
-	// is unchecked directly, so one bad link never becomes a channel="" API
-	// call that would poison the whole batch.
-	byChannel := map[string][]links.Link{}
+	// Group by workspace host plus channel. A channel ID is unique within a
+	// workspace, not globally, so keying on the bare ID could merge links from
+	// two workspaces into one call authenticated against only the first link's
+	// credentials. A link that did not parse to a channel and thread is unchecked
+	// directly, so one bad link never becomes a channel="" API call that would
+	// poison the whole batch.
+	type chanKey struct{ host, channel string }
+	byChannel := map[chanKey][]links.Link{}
 	for _, l := range ls {
 		ch, thread := l.Fields["channel"], l.Fields["thread"]
 		if ch == "" || thread == "" {
 			out[l.Key()] = probe.Result{Unchecked: true, Reason: probe.ReasonUnparseable}
 			continue
 		}
-		byChannel[ch] = append(byChannel[ch], l)
+		k := chanKey{host: hostOf(l.Raw), channel: ch}
+		byChannel[k] = append(byChannel[k], l)
 	}
 
-	for channel, chLinks := range byChannel {
-		// A channel belongs to one workspace, so resolve credentials once from a
-		// link's host. No workspace match means we cannot authenticate to this
-		// channel, so every link in it is unchecked with the auth reason rather
-		// than a silent no-change.
-		creds, ok := c.credsFor(chLinks)
+	for key, chLinks := range byChannel {
+		channel := key.channel
+		// A channel belongs to one workspace, so resolve credentials once from its
+		// host. No workspace match means we cannot authenticate to this channel,
+		// so every link in it is unchecked with the auth reason rather than a
+		// silent no-change.
+		creds, ok := c.resolveHost(key.host)
 		if !ok {
 			for _, l := range chLinks {
 				out[l.Key()] = probe.Result{Unchecked: true, Reason: probe.ReasonAuth}
@@ -265,7 +270,11 @@ func (c *Client) call(ctx context.Context, creds Creds, method string, q url.Val
 		return slackResponse{}, fmt.Errorf("building %s request: %w", method, err)
 	}
 	// The xoxc token authenticates only alongside its d cookie; sending the
-	// bearer without the cookie is rejected as invalid_auth.
+	// bearer without the cookie is rejected as invalid_auth. The cookie value is
+	// used as stored by slack-token-refresh, which is the wire form Slack issued
+	// (percent-encoded, header-safe), the same way the sibling slack-tracker sends
+	// it. Go's transport rejects the request if the stored value ever holds a byte
+	// illegal in a header, which surfaces as a probe error rather than a bad call.
 	req.Header.Set("Authorization", "Bearer "+creds.Token)
 	req.Header.Set("Cookie", "d="+creds.Cookie)
 
