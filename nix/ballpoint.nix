@@ -28,7 +28,7 @@ buildGoModule {
 
   # Regenerate after any go.mod change: set this to lib.fakeHash, run
   # `nix build`, and copy the hash from the mismatch error.
-  vendorHash = "sha256-U5WJdbdfDDcpxPnmB7Fzmv6yRoZk+Xw/Uq+3vHmCJlU=";
+  vendorHash = "sha256-U/542JIV4D6DplmfqDUwZ6kSfot4jaGiqSwiYyhRtwM=";
 
   # Only the command is built. The internal packages come along as its
   # dependencies; the placeholders and the tools-tagged file do not.
