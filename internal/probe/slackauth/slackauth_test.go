@@ -135,6 +135,19 @@ func TestLoadSkipsIncompleteWorkspace(t *testing.T) {
 	}
 }
 
+// A file past the size cap is rejected before it is parsed, and the error names
+// the limit, not the content.
+func TestLoadRejectsOversizedFile(t *testing.T) {
+	path := writeCreds(t, strings.Repeat("A", maxCredentialsBytes+1))
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected an error for an oversized credentials file")
+	}
+	if strings.Contains(err.Error(), "A") {
+		t.Errorf("error echoed file content: %v", err)
+	}
+}
+
 // A malformed file must fail without echoing any byte of the credential blob,
 // since the offending bytes carry tokens.
 func TestLoadMalformedNeverLeaks(t *testing.T) {

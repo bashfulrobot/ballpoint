@@ -10,11 +10,17 @@ package slackauth
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// maxCredentialsBytes bounds the credentials read. A real slack-token-refresh
+// store is a few kilobytes, so this only guards against a pathological or
+// tampered file forcing an unbounded allocation.
+const maxCredentialsBytes = 1 << 20
 
 // Creds is one workspace's browser-session credential pair. Token is the xoxc
 // bearer token; Cookie is the xoxd value sent as the d cookie.
@@ -62,12 +68,23 @@ type credentialsFile struct {
 // returns a generic error that never echoes the file's bytes, since those bytes
 // carry tokens.
 func Load(path string) (*Store, error) {
-	raw, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &Store{}, nil
 		}
 		return nil, fmt.Errorf("reading slack credentials: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	// Read one byte past the cap so an oversized file is detected rather than
+	// silently truncated into a misleading parse error.
+	raw, err := io.ReadAll(io.LimitReader(f, maxCredentialsBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading slack credentials: %w", err)
+	}
+	if len(raw) > maxCredentialsBytes {
+		return nil, fmt.Errorf("slack credentials file exceeds %d bytes", maxCredentialsBytes)
 	}
 
 	var parsed credentialsFile
