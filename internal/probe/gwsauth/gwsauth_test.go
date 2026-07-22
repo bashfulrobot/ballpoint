@@ -110,6 +110,34 @@ func TestAccessTokenNeverLeaksSecrets(t *testing.T) {
 	}
 }
 
+func TestAccessTokenMalformedCredsNoLeak(t *testing.T) {
+	// Malformed export JSON carrying a sentinel; the error must not echo it.
+	s := New(WithRunner(fakeRunner(`{"client_secret":"SENTINEL_SECRET" oops`, nil)))
+	_, err := s.AccessToken(context.Background())
+	if err == nil {
+		t.Fatal("expected error for malformed credentials")
+	}
+	if strings.Contains(err.Error(), "SENTINEL_SECRET") {
+		t.Errorf("error leaked malformed credential input: %v", err)
+	}
+}
+
+func TestAccessTokenMalformedTokenResponseNoLeak(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"access_token":"ya29.SENTINEL_TOKEN" oops`))
+	}))
+	defer srv.Close()
+
+	s := New(WithRunner(fakeRunner(testCreds, nil)), WithTokenURL(srv.URL))
+	_, err := s.AccessToken(context.Background())
+	if err == nil {
+		t.Fatal("expected error for malformed token response")
+	}
+	if strings.Contains(err.Error(), "SENTINEL_TOKEN") {
+		t.Errorf("error leaked token fragment: %v", err)
+	}
+}
+
 func TestAvailableReflectsLookPath(t *testing.T) {
 	orig := lookPath
 	defer func() { lookPath = orig }()

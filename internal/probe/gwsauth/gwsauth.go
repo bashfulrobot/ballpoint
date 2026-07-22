@@ -96,7 +96,9 @@ func (s *Source) AccessToken(ctx context.Context) (string, error) {
 	}
 	var cred authorizedUser
 	if err := json.Unmarshal(out, &cred); err != nil {
-		return "", fmt.Errorf("decoding gws credentials: %w", err)
+		// Do not wrap the decoder error: a json syntax error can echo a byte of
+		// the credential blob, and this message reaches a stderr warning.
+		return "", fmt.Errorf("gws credentials malformed")
 	}
 	if cred.ClientID == "" || cred.ClientSecret == "" || cred.RefreshToken == "" {
 		return "", fmt.Errorf("gws credentials incomplete")
@@ -132,7 +134,9 @@ func (s *Source) exchange(ctx context.Context, cred authorizedUser) (string, err
 		AccessToken string `json:"access_token"`
 	}
 	if err := probe.DecodeJSON(resp.Body, &body); err != nil {
-		return "", fmt.Errorf("decoding token response: %w", err)
+		// Do not wrap the decoder error: a json syntax error can echo a byte of
+		// the token response, which carries the access token.
+		return "", fmt.Errorf("token response malformed")
 	}
 	if body.AccessToken == "" {
 		return "", fmt.Errorf("token exchange returned no access token")
