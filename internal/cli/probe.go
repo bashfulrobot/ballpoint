@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/bashfulrobot/ballpoint/internal/config"
@@ -14,6 +16,8 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/probe/gwsauth"
 	"github.com/bashfulrobot/ballpoint/internal/probe/probeset"
 	"github.com/bashfulrobot/ballpoint/internal/probe/salesforce"
+	"github.com/bashfulrobot/ballpoint/internal/probe/slack"
+	"github.com/bashfulrobot/ballpoint/internal/probe/slackauth"
 	"github.com/bashfulrobot/ballpoint/internal/secrets"
 	"github.com/bashfulrobot/ballpoint/internal/sources"
 	"github.com/bashfulrobot/ballpoint/internal/sources/todoist"
@@ -46,7 +50,11 @@ func resolveProbeDeps(f probeFlags, stderr io.Writer) (probeDeps, error) {
 	if err != nil {
 		return probeDeps{}, err
 	}
-	deps.creds.Slack, _ = secrets.Load(path, "slack_token")
+	// Slack auth lives in the slack-token-refresh store, not this secrets file,
+	// so there is no slack_token key. slackResolver maps each link's workspace
+	// host to its xoxc/xoxd pair; a missing or unreadable store leaves the
+	// resolver nil and renders Slack unchecked.
+	deps.creds.Slack = slackResolver(stderr)
 	deps.creds.Aha, _ = secrets.Load(path, "aha_token")
 	// Google auth lives in the gws CLI's own store, not this secrets file, so
 	// there is no google_token key. googleToken mints a fresh access token for
@@ -67,6 +75,35 @@ func resolveProbeDeps(f probeFlags, stderr io.Writer) (probeDeps, error) {
 	}
 	deps.tasks = delta.Tasks
 	return deps, nil
+}
+
+// slackResolver loads the slack-token-refresh credentials store and returns a
+// resolver mapping a link's workspace host to its xoxc/xoxd pair. A missing
+// store is the normal state on a host that never ran the refresher and is
+// silent; an unreadable or malformed store warns and returns nil. A nil resolver
+// leaves the Slack prober unregistered, so Slack links render unchecked without
+// failing the run.
+func slackResolver(stderr io.Writer) slack.Resolver {
+	path, err := slackauth.DefaultPath()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: locating slack credentials failed, Slack unchecked: %v\n", err)
+		return nil
+	}
+	store, err := slackauth.Load(path)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: slack credentials unreadable, Slack unchecked: %v\n", err)
+		return nil
+	}
+	if store.Empty() {
+		return nil
+	}
+	return func(host string) (slack.Creds, bool) {
+		c, ok := store.ForHost(host)
+		if !ok {
+			return slack.Creds{}, false
+		}
+		return slack.Creds{Token: c.Token, Cookie: c.Cookie}, true
+	}
 }
 
 // secretsPathOrDefault returns the explicit path when set, otherwise the
@@ -162,6 +199,17 @@ func runProbe(deps probeDeps, stdout, stderr io.Writer) error {
 	return enc.Encode(report)
 }
 
+// slackChannelHost returns the lowercased host of a Slack permalink for the
+// dry-run call estimate, mirroring how the prober groups channels by host. An
+// unparseable link contributes an empty host, so it still groups by channel.
+func slackChannelHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
+
 // dryRunPlan prints how many calls each system would take, proving the
 // batch-by-system collapse without making any prober call. Slack collapses to
 // one history call per distinct channel; every other system is one call for the
@@ -174,7 +222,10 @@ func dryRunPlan(tasks []sources.Task, stdout io.Writer) error {
 			records[l.System]++
 			if l.System == links.SystemSlack {
 				if ch := l.Fields["channel"]; ch != "" {
-					channels[ch] = true
+					// One history call per channel per workspace, matching the
+					// prober's host+channel grouping, so a shared channel ID across
+					// two workspaces counts as two calls, not one.
+					channels[slackChannelHost(l.Raw)+"\x00"+ch] = true
 				}
 			}
 		}

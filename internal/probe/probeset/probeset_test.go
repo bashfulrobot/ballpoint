@@ -4,13 +4,20 @@ import (
 	"testing"
 
 	"github.com/bashfulrobot/ballpoint/internal/links"
+	"github.com/bashfulrobot/ballpoint/internal/probe/slack"
 )
+
+// fixedResolver is a non-nil Slack resolver that always returns a pair, standing
+// in for a loaded credentials store.
+func fixedResolver(string) (slack.Creds, bool) {
+	return slack.Creds{Token: "xoxc-test", Cookie: "xoxd-test"}, true
+}
 
 // Build registers a prober only for a system whose credential is present. A
 // missing credential leaves that system unregistered, so the engine renders it
 // unchecked rather than failing the run.
 func TestBuildSkipsMissingCreds(t *testing.T) {
-	reg := Build(Credentials{Slack: "test-token"}) // aha, google absent
+	reg := Build(Credentials{Slack: fixedResolver}) // aha, google absent
 
 	if _, ok := reg.For(links.SystemSlack); !ok {
 		t.Error("slack prober not registered despite a token")
