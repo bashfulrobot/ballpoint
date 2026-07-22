@@ -156,16 +156,19 @@ its token from the same file inside the script for the same reason.
 `internal/secrets` is the loader; the value is returned to the caller and never
 logged, and no error message includes it.
 
-The probe reads one more flat key per source it can check: `slack_token`,
-`aha_token`, and `google_token` (shared by the Gmail and Drive probers). Each
-is loaded the same way, at runtime, never from the environment or the store,
-and never logged. A missing key is not fatal. That source's links render
-`unchecked` for the run instead of failing it.
+The probe reads one more flat key per source it can check: `slack_token` and
+`aha_token`. Each is loaded the same way, at runtime, never from the
+environment or the store, and never logged. A missing key is not fatal. That
+source's links render `unchecked` for the run instead of failing it.
 
-Salesforce is the exception to the per-source token pattern. Its auth lives in
-the `sf` CLI's own store, not this secrets file, so there is no `salesforce_token`
-key. The prober is registered when the `sf` binary is on PATH; when it is absent,
-Salesforce links render `unchecked` like any other unregistered source.
+Salesforce and Google are the exceptions to the per-source token pattern. Their
+auth lives in a CLI's own store, not this secrets file. Salesforce reads the
+`sf` CLI store, so there is no `salesforce_token` key, and the prober registers
+when the `sf` binary is on PATH. Gmail and Drive read the `gws` (Google
+Workspace CLI) store, where ballpoint runs `gws auth export`, exchanges the
+stored refresh token for a short-lived access token each run, and never
+persists a `google_token`. When `gws` is absent or unauthenticated, Gmail and
+Drive links render `unchecked` like any other unregistered source.
 
 ## Benchmark
 

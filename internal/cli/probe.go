@@ -11,6 +11,7 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/config"
 	"github.com/bashfulrobot/ballpoint/internal/links"
 	"github.com/bashfulrobot/ballpoint/internal/probe"
+	"github.com/bashfulrobot/ballpoint/internal/probe/gwsauth"
 	"github.com/bashfulrobot/ballpoint/internal/probe/probeset"
 	"github.com/bashfulrobot/ballpoint/internal/probe/salesforce"
 	"github.com/bashfulrobot/ballpoint/internal/secrets"
@@ -47,7 +48,15 @@ func resolveProbeDeps(f probeFlags) (probeDeps, error) {
 	}
 	deps.creds.Slack, _ = secrets.Load(path, "slack_token")
 	deps.creds.Aha, _ = secrets.Load(path, "aha_token")
-	deps.creds.Google, _ = secrets.Load(path, "google_token")
+	// Google auth lives in the gws CLI's own store, not this secrets file, so
+	// there is no google_token key. When gws is present, mint a fresh access
+	// token for this run; any failure (gws absent, unauthenticated, or offline)
+	// leaves the token empty and renders Gmail and Drive unchecked.
+	if gwsauth.Available() {
+		if tok, err := gwsauth.New().AccessToken(context.Background()); err == nil {
+			deps.creds.Google = tok
+		}
+	}
 	// Salesforce auth lives in the sf CLI's own store, not this secrets file, so
 	// the prober is gated on the binary being present rather than a token.
 	deps.creds.Salesforce = salesforce.Available()
