@@ -4,14 +4,48 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bashfulrobot/ballpoint/internal/fsutil"
 )
+
+// Size caps on the assessment summary. maxAssessmentBytes bounds the model's
+// summary at persist and load time so a pathological or tampered summary cannot
+// bloat memory or the interactive render. maxStatusFileBytes bounds a single
+// status file read, so a tampered oversized file is capped rather than slurped
+// whole; a file larger than this fails to decode and is skipped.
+const (
+	maxAssessmentBytes = 8 << 10 // 8 KiB
+	maxStatusFileBytes = 1 << 20 // 1 MiB
+)
+
+// truncateAssessment caps s at maxAssessmentBytes without splitting a UTF-8
+// rune. An over-long summary is trimmed rather than rejected, so the card still
+// shows the model's take, just bounded.
+func truncateAssessment(s string) string {
+	if len(s) <= maxAssessmentBytes {
+		return s
+	}
+	b := s[:maxAssessmentBytes]
+	// Drop a trailing incomplete rune so the trimmed tail is valid UTF-8. A byte
+	// slice cut mid-rune ends in a lead or continuation byte that DecodeLastRune
+	// reports as RuneError with size 1.
+	for len(b) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(b); r == utf8.RuneError && size <= 1 {
+			b = b[:len(b)-1]
+			continue
+		}
+		break
+	}
+	return b
+}
 
 // Job states, persisted so `ballpoint dispatch --status` can report a run.
 const (
@@ -64,14 +98,25 @@ func WriteStatus(root string, s Status) error {
 			s.Assessment = prior.Assessment
 		}
 	}
+	// Bound the summary before it lands on disk, so a pathological model output
+	// cannot bloat the status file or the walk that later renders it.
+	s.Assessment = truncateAssessment(s.Assessment)
 	return fsutil.WriteJSONAtomic(path, s)
 }
 
 // readStatus reads and decodes one status file. ok is false when the file is
 // missing, unreadable, or malformed, so a single bad file is skipped rather than
-// failing the whole query.
+// failing the whole query. The open uses O_NOFOLLOW so a symlink planted in the
+// 0o700 dispatch dir cannot redirect the read outside it, and the read is capped
+// at maxStatusFileBytes so a tampered oversized file is bounded rather than
+// slurped whole (an oversized file then fails to decode and is skipped).
 func readStatus(path string) (Status, bool) {
-	data, err := os.ReadFile(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return Status{}, false
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxStatusFileBytes))
 	if err != nil {
 		return Status{}, false
 	}
@@ -79,6 +124,8 @@ func readStatus(path string) (Status, bool) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return Status{}, false
 	}
+	// Defensively bound a tampered summary that decoded within the file cap.
+	s.Assessment = truncateAssessment(s.Assessment)
 	return s, true
 }
 

@@ -3,8 +3,10 @@ package dispatch
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestStatusRoundTrip(t *testing.T) {
@@ -86,5 +88,55 @@ func TestLoadStatusesSkipsBadFile(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].TaskID != "42" {
 		t.Errorf("statuses = %+v, want only the good entry", got)
+	}
+}
+
+func TestWriteStatusBoundsAssessment(t *testing.T) {
+	root := t.TempDir()
+	big := strings.Repeat("a", maxAssessmentBytes+4096)
+	if err := WriteStatus(root, Status{TaskID: "42", State: StateSucceeded, Assessment: big}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadStatuses(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("statuses = %+v, want one entry", got)
+	}
+	if n := len(got[0].Assessment); n > maxAssessmentBytes {
+		t.Errorf("persisted assessment = %d bytes, want <= %d", n, maxAssessmentBytes)
+	}
+}
+
+func TestTruncateAssessmentKeepsRuneBoundary(t *testing.T) {
+	// A multi-byte rune straddling the cap must not be split into invalid UTF-8.
+	s := strings.Repeat("a", maxAssessmentBytes-1) + "é" + "tail"
+	got := truncateAssessment(s)
+	if len(got) > maxAssessmentBytes {
+		t.Errorf("len = %d, want <= %d", len(got), maxAssessmentBytes)
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("truncated assessment is not valid UTF-8: %q", got)
+	}
+}
+
+func TestReadStatusRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	// Write a real status elsewhere, then point a .json symlink at it inside the
+	// dispatch dir. The O_NOFOLLOW read must refuse to follow the link.
+	target := filepath.Join(t.TempDir(), "target.json")
+	if err := os.WriteFile(target, []byte(`{"task_id":"99","state":"succeeded"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(statusDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(statusDir(root), "link.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if _, ok := readStatus(link); ok {
+		t.Error("readStatus followed a symlink, want it rejected")
 	}
 }
