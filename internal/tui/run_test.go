@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/bashfulrobot/ballpoint/internal/dispatch"
 	"github.com/bashfulrobot/ballpoint/internal/sources"
 	"github.com/bashfulrobot/ballpoint/internal/store"
 )
@@ -34,6 +35,32 @@ func TestResolveWalkResolvesCards(t *testing.T) {
 	}
 	if len(got.Cards) != 1 || got.Cards[0].TaskID != "1" {
 		t.Fatalf("cards = %+v, want the single Kong task", got.Cards)
+	}
+}
+
+func TestResolveWalkSurfacesAssessment(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(dir)
+	_ = st.SaveTask(sources.Task{ID: "1", Title: "one", Project: "Kong"})
+	_ = st.SaveTask(sources.Task{ID: "2", Title: "two", Project: "Kong"})
+	// A succeeded dispatch status for task 1 carries a summary; task 2 has none.
+	if err := dispatch.WriteStatus(dir, dispatch.Status{TaskID: "1", State: dispatch.StateSucceeded, Assessment: "waiting on legal"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ResolveWalk(WalkConfig{StateDir: dir, Scope: Scope{Kind: ScopeProject, Value: "Kong"}, ScriptsDir: "/scripts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]Card{}
+	for _, c := range got.Cards {
+		byID[c.TaskID] = c
+	}
+	if byID["1"].Assessment != "waiting on legal" {
+		t.Errorf("card 1 assessment = %q, want %q", byID["1"].Assessment, "waiting on legal")
+	}
+	if byID["2"].Assessment != "" {
+		t.Errorf("card 2 assessment = %q, want empty", byID["2"].Assessment)
 	}
 }
 

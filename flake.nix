@@ -97,9 +97,26 @@
                 ];
               };
 
+              withDispatch = pkgs.lib.evalModules {
+                specialArgs = { inherit pkgs; };
+                modules = [
+                  stubs
+                  module
+                  {
+                    programs.ballpoint.enable = true;
+                    programs.ballpoint.dispatch.enable = true;
+                    programs.ballpoint.dispatch.onCalendar = "Mon 09:15";
+                    programs.ballpoint.dispatch.concurrency = 4;
+                    programs.ballpoint.dispatch.model = "haiku";
+                  }
+                ];
+              };
+
               installed = pkgs.lib.head base.config.home.packages;
               service = withTimer.config.systemd.user.services.ballpoint-probe;
               timer = withTimer.config.systemd.user.timers.ballpoint-probe;
+              dispatchService = withDispatch.config.systemd.user.services.ballpoint-dispatch;
+              dispatchTimer = withDispatch.config.systemd.user.timers.ballpoint-dispatch;
               b2s = pkgs.lib.boolToString;
 
               # A newline in a str unit option would inject a second INI
@@ -121,6 +138,8 @@
               # systemd ExecStart quoting: both flags rendered, concurrency before
               # secrets-path, each argument double-quoted.
               wantExec = ''"probe" "--concurrency" "6" "--secrets-path" "/tmp/x.json"'';
+              # Dispatch ExecStart: concurrency then model, each argument quoted.
+              wantDispatchExec = ''"dispatch" "--concurrency" "4" "--model" "haiku"'';
             in
             pkgs.runCommand "check-hm-module" { } ''
               test "${installed}" = "${self.packages.${system}.default}"
@@ -156,6 +175,29 @@
               test -n "${timer.Timer.OnStartupSec}"
               test -n "${timer.Timer.RandomizedDelaySec}"
               test "${pkgs.lib.concatStringsSep "," timer.Install.WantedBy}" = "timers.target"
+
+              # Dispatch disabled by default: enabling only the probe leaves no
+              # dispatch timer, so the paid AI run is never scheduled unasked.
+              test "${b2s (withTimer.config.systemd.user.timers ? ballpoint-dispatch)}" = "false"
+
+              # Dispatch service: oneshot, retrying, ordered after the probe so it
+              # assesses a fresh corpus, and carrying no Install section.
+              test "${dispatchService.Service.Type}" = "oneshot"
+              test "${dispatchService.Service.Restart}" = "on-failure"
+              test "${pkgs.lib.concatStringsSep "," dispatchService.Unit.After}" = "ballpoint-probe.service"
+              test "${b2s (dispatchService ? Install)}" = "false"
+
+              # Dispatch ExecStart carries model and concurrency, quoted the systemd way.
+              dactual=${pkgs.lib.escapeShellArg dispatchService.Service.ExecStart}
+              dexpected=${pkgs.lib.escapeShellArg wantDispatchExec}
+              case "$dactual" in
+                *"$dexpected") : ;;
+                *) echo "unexpected dispatch ExecStart: $dactual" >&2; exit 1 ;;
+              esac
+
+              # Dispatch timer: calendar schedule, wanted by timers.target.
+              test "${dispatchTimer.Timer.OnCalendar}" = "Mon 09:15"
+              test "${pkgs.lib.concatStringsSep "," dispatchTimer.Install.WantedBy}" = "timers.target"
 
               touch $out
             '';

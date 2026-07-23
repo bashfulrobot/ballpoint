@@ -23,15 +23,18 @@ const (
 )
 
 // Status is one task's dispatch outcome, one file per task under
-// <root>/dispatch/.
+// <root>/dispatch/. Assessment carries the model's summary line on a succeeded
+// job, so the walk can show the AI's take per card without a Todoist round trip;
+// it is empty on any non-succeeded state.
 type Status struct {
-	TaskID    string    `json:"task_id"`
-	TaskRef   string    `json:"task_ref"`
-	State     string    `json:"state"`
-	Detail    string    `json:"detail,omitempty"`
-	CostUSD   float64   `json:"cost_usd,omitempty"`
-	StartedAt time.Time `json:"started_at"`
-	EndedAt   time.Time `json:"ended_at,omitempty"`
+	TaskID     string    `json:"task_id"`
+	TaskRef    string    `json:"task_ref"`
+	State      string    `json:"state"`
+	Detail     string    `json:"detail,omitempty"`
+	Assessment string    `json:"assessment,omitempty"`
+	CostUSD    float64   `json:"cost_usd,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	EndedAt    time.Time `json:"ended_at,omitempty"`
 }
 
 func statusDir(root string) string { return filepath.Join(root, "dispatch") }
