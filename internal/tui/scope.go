@@ -27,39 +27,38 @@ type Scope struct {
 // Resolve filters the cached corpus to the task ids in scope. An unknown value
 // yields an empty result, which the TUI reports rather than hiding.
 func (s Scope) Resolve(tasks []sources.Task) []string {
+	match := s.predicate()
 	var ids []string
 	for _, t := range tasks {
-		if s.matches(t) {
+		if match(t) {
 			ids = append(ids, t.ID)
 		}
 	}
 	return ids
 }
 
-func (s Scope) matches(t sources.Task) bool {
+// predicate builds the per-task matcher once, so a filter expression is parsed a
+// single time rather than per task.
+func (s Scope) predicate() filterPredicate {
 	switch s.Kind {
 	case ScopeProject:
-		return strings.EqualFold(t.Project, s.Value)
+		return func(t sources.Task) bool { return strings.EqualFold(t.Project, s.Value) }
 	case ScopeTask:
-		return t.ID == s.Value
+		return func(t sources.Task) bool { return t.ID == s.Value }
 	case ScopeAll:
-		return true
+		return func(sources.Task) bool { return true }
 	case ScopeFilter, ScopePreset:
-		// A full Todoist filter parser is out of scope. Degrade a raw filter to a
-		// case-insensitive substring over the title, labels, and section, so the
-		// cache can answer it offline. Documented limitation.
+		// Parse the Todoist filter subset the cache can answer offline. An
+		// expression the parser does not accept (unsupported term, malformed
+		// syntax) degrades to a case-insensitive substring over the title, labels,
+		// and section, so nothing regresses and the walk is never dropped.
+		if pred, ok := compileFilter(s.Value); ok {
+			return pred
+		}
 		q := strings.ToLower(s.Value)
-		if strings.Contains(strings.ToLower(t.Title), q) {
-			return true
-		}
-		for _, l := range t.Labels {
-			if strings.Contains(strings.ToLower(l), q) {
-				return true
-			}
-		}
-		return strings.Contains(strings.ToLower(t.Section), q)
+		return func(t sources.Task) bool { return substringMatch(t, q) }
 	}
-	return false
+	return func(sources.Task) bool { return false }
 }
 
 // scopeFlagKeys maps a scope kind to its CLI flag name. The order matters only
