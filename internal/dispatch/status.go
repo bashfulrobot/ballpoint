@@ -47,7 +47,10 @@ func statusPath(root, id string) (string, error) {
 }
 
 // WriteStatus writes one task's status atomically, overwriting any prior state
-// for the same task.
+// for the same task. A write whose Assessment is empty carries a prior non-empty
+// summary forward, so a failed or requeued re-run does not wipe the last good
+// assessment the walk shows. The success path always sets a non-empty summary,
+// so it still overwrites.
 func WriteStatus(root string, s Status) error {
 	path, err := statusPath(root, s.TaskID)
 	if err != nil {
@@ -56,7 +59,27 @@ func WriteStatus(root string, s Status) error {
 	if err := os.MkdirAll(statusDir(root), 0o700); err != nil {
 		return fmt.Errorf("creating dispatch directory: %w", err)
 	}
+	if s.Assessment == "" {
+		if prior, ok := readStatus(path); ok && prior.Assessment != "" {
+			s.Assessment = prior.Assessment
+		}
+	}
 	return fsutil.WriteJSONAtomic(path, s)
+}
+
+// readStatus reads and decodes one status file. ok is false when the file is
+// missing, unreadable, or malformed, so a single bad file is skipped rather than
+// failing the whole query.
+func readStatus(path string) (Status, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Status{}, false
+	}
+	var s Status
+	if err := json.Unmarshal(data, &s); err != nil {
+		return Status{}, false
+	}
+	return s, true
 }
 
 // LoadStatuses reads every status file, sorted by task id. A missing directory
@@ -74,16 +97,11 @@ func LoadStatuses(root string) ([]Status, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(statusDir(root), e.Name()))
-		if err != nil {
-			return nil, fmt.Errorf("reading status %s: %w", e.Name(), err)
+		// A missing, unreadable, or malformed status file is skipped rather than
+		// failing the whole query, so one bad file does not drop every assessment.
+		if s, ok := readStatus(filepath.Join(statusDir(root), e.Name())); ok {
+			out = append(out, s)
 		}
-		var s Status
-		if err := json.Unmarshal(data, &s); err != nil {
-			// A malformed status file is skipped rather than failing the query.
-			continue
-		}
-		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TaskID < out[j].TaskID })
 	return out, nil
