@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/bashfulrobot/ballpoint/internal/dispatch"
+	"github.com/bashfulrobot/ballpoint/internal/sanitize"
 	"github.com/bashfulrobot/ballpoint/internal/store"
 )
 
@@ -125,17 +126,21 @@ func Run(cfg Config) error {
 	return nil
 }
 
-// scopeLabel renders a scope for an error message.
+// scopeLabel renders a scope for an error message. The value is user-supplied
+// (a flag or preset name) and lands on stderr, so it is sanitized as a single
+// line, the same policy the TUI header uses, to keep an embedded escape sequence
+// or newline out of the terminal.
 func scopeLabel(s Scope) string {
+	v := sanitize.Line(s.Value)
 	switch s.Kind {
 	case ScopeProject:
-		return "project " + s.Value
+		return "project " + v
 	case ScopeFilter:
-		return "filter " + s.Value
+		return "filter " + v
 	case ScopePreset:
-		return "preset " + s.Value
+		return "preset " + v
 	case ScopeTask:
-		return "task " + s.Value
+		return "task " + v
 	default:
 		return "the current scope"
 	}

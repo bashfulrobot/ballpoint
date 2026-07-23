@@ -10,8 +10,9 @@ Usage:
 
 Flags:
   --project P      walk one project
-  --filter Q       walk a filter query, matched against the cache
-  --preset P       walk a named preset
+  --filter Q       walk a filter query against the cache: @label #project p1..p4,
+                   combined with & | ! and parens; other terms match as substrings
+  --preset P       walk a named preset (same query syntax as --filter)
   --task ID        walk a single task
   --scripts-dir D  override the triage macro scripts directory
   --refresh        run probe before walking to refresh the cache

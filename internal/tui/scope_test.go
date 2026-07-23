@@ -36,6 +36,70 @@ func TestScopeFilterSubstring(t *testing.T) {
 	}
 }
 
+func TestScopeFilterGrammar(t *testing.T) {
+	tasks := []sources.Task{
+		{ID: "1", Project: "Work", Labels: []string{"waiting"}},
+		{ID: "2", Project: "Work", Labels: []string{"someday"}}, // right project, wrong label
+		{ID: "3", Project: "Home", Labels: []string{"waiting"}}, // right label, wrong project
+		{ID: "4", Project: "Work", Labels: []string{"waiting"}, Priority: "p1"},
+	}
+	// @waiting & #Work matches only the waiting-labelled tasks in Work.
+	ids := Scope{Kind: ScopeFilter, Value: "@waiting & #Work"}.Resolve(tasks)
+	if len(ids) != 2 || ids[0] != "1" || ids[1] != "4" {
+		t.Fatalf("@waiting & #Work = %v, want [1 4]", ids)
+	}
+}
+
+func TestScopeFilterPriorityOrUnsupported(t *testing.T) {
+	tasks := []sources.Task{
+		{ID: "1", Priority: "p1", Title: "urgent"},
+		{ID: "2", Priority: "p4", Title: "look at overdue backlog"}, // substring hit on "overdue"
+		{ID: "3", Priority: "p3", Title: "nothing here"},
+	}
+	// p1 | overdue: p1 matches the priority; "overdue" is unsupported and degrades
+	// to a substring, so the walk still parses and returns both.
+	ids := Scope{Kind: ScopeFilter, Value: "p1 | overdue"}.Resolve(tasks)
+	if len(ids) != 2 || ids[0] != "1" || ids[1] != "2" {
+		t.Fatalf("p1 | overdue = %v, want [1 2]", ids)
+	}
+}
+
+func TestScopeFilterMalformedDegradesToSubstring(t *testing.T) {
+	tasks := []sources.Task{
+		{ID: "1", Title: "note about (@waiting syntax"}, // literal substring of the raw value
+		{ID: "2", Title: "nope"},
+	}
+	// Unbalanced parens: the parser rejects it, so the whole raw value is used as
+	// a substring rather than panicking or dropping the walk.
+	ids := Scope{Kind: ScopeFilter, Value: "(@waiting"}.Resolve(tasks)
+	if len(ids) != 1 || ids[0] != "1" {
+		t.Fatalf("malformed filter = %v, want [1] via substring fallback", ids)
+	}
+}
+
+func TestScopePresetUsesParser(t *testing.T) {
+	// ScopePreset shares the filter path, so the grammar applies to presets too.
+	tasks := []sources.Task{
+		{ID: "1", Labels: []string{"waiting"}},
+		{ID: "2", Labels: []string{"someday"}},
+	}
+	ids := Scope{Kind: ScopePreset, Value: "@waiting"}.Resolve(tasks)
+	if len(ids) != 1 || ids[0] != "1" {
+		t.Fatalf("preset @waiting = %v, want [1]", ids)
+	}
+}
+
+func TestScopeFilterEmptyMatchesNothing(t *testing.T) {
+	// An empty filter value must not fall through to substring "", which would
+	// match the whole corpus.
+	tasks := []sources.Task{{ID: "1", Title: "a"}, {ID: "2", Title: "b"}}
+	for _, v := range []string{"", "   "} {
+		if ids := (Scope{Kind: ScopeFilter, Value: v}).Resolve(tasks); len(ids) != 0 {
+			t.Errorf("empty filter %q = %v, want no matches", v, ids)
+		}
+	}
+}
+
 func TestScopeAll(t *testing.T) {
 	tasks := []sources.Task{{ID: "1"}, {ID: "2"}}
 	if ids := (Scope{Kind: ScopeAll}).Resolve(tasks); len(ids) != 2 {

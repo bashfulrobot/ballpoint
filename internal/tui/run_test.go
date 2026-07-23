@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/bashfulrobot/ballpoint/internal/dispatch"
@@ -71,5 +72,14 @@ func TestResolveWalkScopeEmpty(t *testing.T) {
 	_, err := ResolveWalk(WalkConfig{StateDir: dir, Scope: Scope{Kind: ScopeProject, Value: "Kong"}, ScriptsDir: "/scripts"})
 	if !errors.Is(err, ErrScopeEmpty) {
 		t.Fatalf("scope-empty error = %v, want ErrScopeEmpty", err)
+	}
+}
+
+func TestScopeLabelSanitizesValue(t *testing.T) {
+	// The scope value reaches stderr, so an embedded escape or newline must not
+	// survive into the error message.
+	got := scopeLabel(Scope{Kind: ScopeFilter, Value: "@a\x1b[31m\nevil"})
+	if strings.ContainsAny(got, "\x1b\n") {
+		t.Errorf("scopeLabel kept a control byte: %q", got)
 	}
 }
