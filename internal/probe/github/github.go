@@ -89,10 +89,12 @@ func Available() bool {
 
 // defaultRunner runs `gh` and captures stdout, returning the combined output
 // alongside the exit error so the caller can classify an auth failure from the
-// hint gh writes to stderr.
+// hint gh writes to stderr. Both streams are captured through a capped buffer, so
+// a compromised or misbehaving gh cannot stream an unbounded body into memory;
+// the bound is real here, ahead of the decode-time cap, not after it.
 func defaultRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr cappedBuffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -101,6 +103,27 @@ func defaultRunner(ctx context.Context, name string, args ...string) ([]byte, er
 	}
 	return stdout.Bytes(), nil
 }
+
+// cappedBuffer is an io.Writer that keeps at most probe.MaxResponseBytes and
+// silently discards the rest, reporting every write as fully accepted so the
+// child process is never blocked or errored by the cap. It bounds the memory a
+// single gh invocation can consume regardless of how much it writes.
+type cappedBuffer struct {
+	buf bytes.Buffer
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if room := probe.MaxResponseBytes - c.buf.Len(); room > 0 {
+		if len(p) > room {
+			c.buf.Write(p[:room])
+		} else {
+			c.buf.Write(p)
+		}
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) Bytes() []byte { return c.buf.Bytes() }
 
 // System identifies this prober.
 func (c *Client) System() links.System { return links.SystemGitHub }

@@ -227,3 +227,24 @@ func TestProbeCapsCallCount(t *testing.T) {
 		t.Errorf("ReasonTooMany count = %d, want 5 (the excess links)", tooMany)
 	}
 }
+
+// cappedBuffer keeps at most probe.MaxResponseBytes and reports every write as
+// fully accepted, so a runaway gh cannot exhaust memory yet is never blocked.
+func TestCappedBufferBoundsMemory(t *testing.T) {
+	var b cappedBuffer
+	chunk := make([]byte, 1<<20) // 1 MiB
+	total := 0
+	for range (probe.MaxResponseBytes / len(chunk)) + 8 { // overshoot the cap
+		n, err := b.Write(chunk)
+		if err != nil || n != len(chunk) {
+			t.Fatalf("Write returned (%d, %v), want (%d, nil)", n, err, len(chunk))
+		}
+		total += n
+	}
+	if total <= probe.MaxResponseBytes {
+		t.Fatalf("test did not overshoot the cap: wrote %d, cap %d", total, probe.MaxResponseBytes)
+	}
+	if got := len(b.Bytes()); got != probe.MaxResponseBytes {
+		t.Errorf("buffered %d bytes, want the cap %d", got, probe.MaxResponseBytes)
+	}
+}
