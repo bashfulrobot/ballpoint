@@ -305,6 +305,46 @@ enters the Nix store. The probe reads the values from that file at runtime.
 Firing user timers at boot rather than at login needs systemd user lingering,
 tracked in `nixerator#237`.
 
+### Dispatch prewarm timer
+
+The walk never waits on AI, but an assessment only helps if it exists before you
+walk. `ballpoint dispatch` runs the AI assessor over the tasks queued for
+dispatch and records each summary locally, which the walk then shows on that
+task's card. Only tasks with queued dispatch entries are assessed, so a card
+shows a summary once its task has been through a dispatch run, not for every task
+in scope. It shells out to the `claude` CLI and costs money per run, so it is
+opt-in and separate from the probe prewarm. Set
+`programs.ballpoint.dispatch.enable` to run it on its own timer, ordered after
+the probe so it assesses a fresh corpus.
+
+```nix
+programs.ballpoint = {
+  enable = true;
+  prewarm.enable = true;
+  dispatch = {
+    enable = true;
+    onCalendar = "Mon..Fri 08,12,16:15";   # a few minutes after the probe schedule
+    concurrency = 2;                          # optional, workers share the model quota
+    model = "haiku";                          # optional, empty keeps the built-in default
+  };
+};
+```
+
+The service is `Type = oneshot` with `Restart = on-failure` and the same bounded
+restart as the probe, and it is ordered `After` the probe service so a coincident
+run assesses an already-refreshed corpus. Dispatch reads the cached freshness
+report and the outward queue, so it takes no secrets path. When the timer is off,
+assessments are only produced by running `ballpoint dispatch` by hand.
+
+The assessor runs the `claude` CLI by name, so `claude` must be on the systemd
+user manager's `PATH`. A boot-time run (`onStartupSec`) can fire before your
+login shell has imported the user environment, so if it starts before `claude`
+is resolvable the run fails and produces no assessments. Enabling systemd user
+lingering (see `nixerator#237`) so the user manager starts at boot with a full
+environment, or leaning on the `onCalendar` runs that happen after login, avoids
+that. If `claude` lives outside the manager's `PATH`, put it there or wrap the
+unit's environment accordingly.
+
 ## Licence
 
 MIT.

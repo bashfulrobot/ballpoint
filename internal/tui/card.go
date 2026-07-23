@@ -34,6 +34,10 @@ type Card struct {
 	Report probe.TaskReport
 	Moved  bool // any link moved; drives the sort-first ordering
 	Links  []LinkLine
+	// Assessment is the dispatcher's latest AI summary for this task, or empty
+	// when none has been produced. It is resolved from the local dispatch status
+	// at walk time, never fetched, so the interactive loop stays instant.
+	Assessment string
 }
 
 // BuildCard derives the view-model from a task and its freshness report. now is

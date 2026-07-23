@@ -63,6 +63,18 @@ func (m *Model) renderCard() {
 // not strip control bytes, so each is sanitized before it enters the markdown.
 func workLogMarkdown(c Card) string {
 	var b strings.Builder
+	// The dispatcher's assessment leads the card, above the human description and
+	// work log. It is model-produced, so it is sanitized like every other body
+	// string before glamour renders it. Sanitizing strips control bytes but not
+	// markdown, so, exactly like the description and comment bodies below, the
+	// text can carry its own markdown; the leading heading marks the section but
+	// does not fence untrusted text out of it. Absent assessment renders nothing,
+	// no empty heading.
+	if a := sanitizeTerminal(strings.TrimSpace(c.Assessment)); a != "" {
+		b.WriteString("## Assessment\n\n")
+		b.WriteString(a)
+		b.WriteString("\n\n")
+	}
 	if d := sanitizeTerminal(strings.TrimSpace(c.Task.Description)); d != "" {
 		b.WriteString(d)
 		b.WriteString("\n\n")

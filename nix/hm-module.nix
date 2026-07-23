@@ -2,7 +2,10 @@
 #
 # Installs the binary, and under `programs.ballpoint.prewarm` schedules
 # `ballpoint probe` on a systemd user timer so freshness data is warm before a
-# triage session starts.
+# triage session starts. Under `programs.ballpoint.dispatch` it can also schedule
+# `ballpoint dispatch` (the AI assessor, which costs money per run) on a separate
+# opt-in timer ordered after the probe, so per-task assessments exist before a
+# walk instead of being generated on demand.
 { self }:
 
 { config, lib, pkgs, ... }:
@@ -46,6 +49,16 @@ let
     [ "${cfg.package}/bin/ballpoint" "probe" ]
     ++ lib.optionals (cfg.prewarm.concurrency > 0) [ "--concurrency" (toString cfg.prewarm.concurrency) ]
     ++ lib.optionals (cfg.prewarm.secretsPath != null) [ "--secrets-path" cfg.prewarm.secretsPath ]
+  );
+
+  # The dispatch invocation the prewarm timer runs. Dispatch reads the cached
+  # freshness report and the outward queue, so it takes no secrets path. Model
+  # and concurrency are passed only when set, so the binary's own defaults apply
+  # otherwise.
+  dispatchCommand = escapeSystemdExecArgs (
+    [ "${cfg.package}/bin/ballpoint" "dispatch" ]
+    ++ lib.optionals (cfg.dispatch.concurrency > 0) [ "--concurrency" (toString cfg.dispatch.concurrency) ]
+    ++ lib.optionals (cfg.dispatch.model != "") [ "--model" cfg.dispatch.model ]
   );
 in
 {
@@ -131,6 +144,83 @@ in
         '';
       };
     };
+
+    dispatch = {
+      enable = lib.mkEnableOption ''
+        the ballpoint dispatch prewarm timer. This runs the AI assessor
+        (`ballpoint dispatch`), which shells out to the claude CLI and costs
+        money per run, so it is opt-in and separate from the probe prewarm. It
+        is ordered after the probe service so it assesses a fresh corpus'';
+
+      onCalendar = lib.mkOption {
+        type = lib.types.str;
+        default = "Mon..Fri 08,12,16:15";
+        description = ''
+          systemd OnCalendar schedule for the dispatch run. Defaults to a few
+          minutes after the probe schedule so the corpus is fresh first.
+        '';
+      };
+
+      onStartupSec = lib.mkOption {
+        type = lib.types.str;
+        default = "6min";
+        description = ''
+          Delay after boot before the first dispatch, longer than the probe
+          delay so a boot-time run assesses an already-refreshed corpus.
+        '';
+      };
+
+      randomizedDelaySec = lib.mkOption {
+        type = lib.types.str;
+        default = "2min";
+        description = "systemd RandomizedDelaySec, to spread scheduled runs.";
+      };
+
+      restartSec = lib.mkOption {
+        type = lib.types.str;
+        default = "30s";
+        description = "Delay before an on-failure restart, so a boot-time race retries.";
+      };
+
+      startLimitIntervalSec = lib.mkOption {
+        type = lib.types.str;
+        default = "1h";
+        description = ''
+          Window over which startLimitBurst restarts are counted. Without a
+          bound, an on-failure restart every restartSec turns a permanent
+          failure into a loop that never gives up. Setting this to "0" disables
+          the bound, so the service would retry forever.
+        '';
+      };
+
+      startLimitBurst = lib.mkOption {
+        type = lib.types.ints.unsigned;
+        default = 5;
+        description = ''
+          Restarts allowed within startLimitIntervalSec before systemd stops
+          retrying and lets the unit fail. Zero disables the bound.
+        '';
+      };
+
+      concurrency = lib.mkOption {
+        type = lib.types.ints.unsigned;
+        default = 0;
+        description = ''
+          Max concurrent assessment jobs. Zero uses the binary's built-in
+          default. Every worker shares the same model quota, so keep this small.
+        '';
+      };
+
+      model = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        example = "haiku";
+        description = ''
+          claude model alias or id for the assessment jobs. Empty uses the
+          binary's built-in default.
+        '';
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
@@ -162,6 +252,38 @@ in
           OnStartupSec = assertNoNewline "onStartupSec" cfg.prewarm.onStartupSec;
           Persistent = true;
           RandomizedDelaySec = assertNoNewline "randomizedDelaySec" cfg.prewarm.randomizedDelaySec;
+        };
+        Install.WantedBy = [ "timers.target" ];
+      };
+    })
+
+    (lib.mkIf cfg.dispatch.enable {
+      systemd.user.services.ballpoint-dispatch = {
+        Unit = {
+          Description = "ballpoint AI assessment prewarm dispatch";
+          # Order after the probe service so a boot-time or coincident run
+          # assesses a corpus the probe has already refreshed. This is ordering
+          # only, not a dependency: dispatch still runs on its own schedule when
+          # the probe timer is disabled, against whatever cache exists.
+          After = [ "ballpoint-probe.service" ];
+          StartLimitIntervalSec = assertNoNewline "dispatch.startLimitIntervalSec" cfg.dispatch.startLimitIntervalSec;
+          StartLimitBurst = cfg.dispatch.startLimitBurst;
+        };
+        Service = {
+          Type = "oneshot";
+          ExecStart = dispatchCommand;
+          Restart = "on-failure";
+          RestartSec = assertNoNewline "dispatch.restartSec" cfg.dispatch.restartSec;
+        };
+      };
+
+      systemd.user.timers.ballpoint-dispatch = {
+        Unit.Description = "Schedule the ballpoint AI assessment prewarm dispatch";
+        Timer = {
+          OnCalendar = assertNoNewline "dispatch.onCalendar" cfg.dispatch.onCalendar;
+          OnStartupSec = assertNoNewline "dispatch.onStartupSec" cfg.dispatch.onStartupSec;
+          Persistent = true;
+          RandomizedDelaySec = assertNoNewline "dispatch.randomizedDelaySec" cfg.dispatch.randomizedDelaySec;
         };
         Install.WantedBy = [ "timers.target" ];
       };

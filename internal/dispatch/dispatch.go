@@ -219,7 +219,10 @@ func runJob(ctx context.Context, cfg Config, g taskGroup) (outcome, bool, float6
 	if dropped > 0 {
 		detail = fmt.Sprintf("dropped %d malformed queue entr%s", dropped, plural(dropped))
 	}
-	writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateSucceeded, Detail: detail, CostUSD: cost, StartedAt: now, EndedAt: cfg.Now()})
+	// Persist the summary on the succeeded status so the walk can surface the
+	// AI's take per card locally, ahead of a later probe re-caching the Todoist
+	// work-log comment.
+	writeStatus(cfg, Status{TaskID: g.id, TaskRef: g.ref, State: StateSucceeded, Detail: detail, Assessment: assessment.Summary, CostUSD: cost, StartedAt: now, EndedAt: cfg.Now()})
 	return outSucceeded, false, cost
 }
 

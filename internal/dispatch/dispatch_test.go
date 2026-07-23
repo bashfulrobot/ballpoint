@@ -89,6 +89,10 @@ func TestRunSuccessWritesBackAndDrains(t *testing.T) {
 	if len(got) != 1 || got[0].State != StateSucceeded {
 		t.Errorf("status = %+v", got)
 	}
+	// The summary is persisted on the succeeded status so the walk can surface it.
+	if got[0].Assessment != "assessed" {
+		t.Errorf("status assessment = %q, want %q", got[0].Assessment, "assessed")
+	}
 }
 
 func TestRunTwoTasksDrainWholeQueue(t *testing.T) {

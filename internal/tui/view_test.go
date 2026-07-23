@@ -54,6 +54,30 @@ func TestWorkLogMarkdownSanitizesBody(t *testing.T) {
 	}
 }
 
+func TestWorkLogMarkdownAssessment(t *testing.T) {
+	// A card with an assessment leads with a sanitized Assessment section.
+	c := Card{Assessment: "stale, ping the owner \x1b]0;x\x07", Task: sources.Task{Description: "the task"}}
+	md := workLogMarkdown(c)
+	if !strings.Contains(md, "## Assessment") {
+		t.Errorf("markdown missing the Assessment heading: %q", md)
+	}
+	if !strings.Contains(md, "stale, ping the owner") {
+		t.Errorf("markdown missing the assessment summary: %q", md)
+	}
+	if strings.ContainsRune(md, 0x1b) || strings.ContainsRune(md, 0x07) {
+		t.Fatalf("assessment left control bytes in the body: %q", md)
+	}
+	if strings.Index(md, "## Assessment") > strings.Index(md, "the task") {
+		t.Errorf("assessment should lead the description: %q", md)
+	}
+
+	// A card with no assessment renders no heading, exactly as before.
+	c2 := Card{Task: sources.Task{Description: "the task"}}
+	if md2 := workLogMarkdown(c2); strings.Contains(md2, "Assessment") {
+		t.Errorf("empty assessment must render no heading: %q", md2)
+	}
+}
+
 func TestHTTPOnlyURL(t *testing.T) {
 	for _, ok := range []string{"https://todoist.com/showTask?id=1", "http://x.test"} {
 		if err := httpOnlyURL(ok); err != nil {

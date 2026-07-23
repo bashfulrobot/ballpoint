@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/bashfulrobot/ballpoint/internal/dispatch"
 	"github.com/bashfulrobot/ballpoint/internal/store"
 )
 
@@ -54,6 +55,19 @@ func ResolveWalk(cfg WalkConfig) (Config, error) {
 		now = time.Now()
 	}
 
+	// The dispatcher's per-task assessment summaries, resolved locally so a card
+	// can show the AI's take ahead of time. A missing dispatch dir is empty, not
+	// an error, and a status write failure never blocks the walk, so a read
+	// failure here degrades to no assessments rather than failing the walk.
+	assessments := map[string]string{}
+	if statuses, serr := dispatch.LoadStatuses(cfg.StateDir); serr == nil {
+		for _, s := range statuses {
+			if s.Assessment != "" {
+				assessments[s.TaskID] = s.Assessment
+			}
+		}
+	}
+
 	wanted := make(map[string]bool)
 	for _, id := range cfg.Scope.Resolve(tasks) {
 		wanted[id] = true
@@ -61,7 +75,9 @@ func ResolveWalk(cfg WalkConfig) (Config, error) {
 	var cards []Card
 	for _, tk := range tasks {
 		if wanted[tk.ID] {
-			cards = append(cards, BuildCard(tk, report.Tasks[tk.ID], now))
+			card := BuildCard(tk, report.Tasks[tk.ID], now)
+			card.Assessment = assessments[tk.ID]
+			cards = append(cards, card)
 		}
 	}
 	if len(cards) == 0 {
