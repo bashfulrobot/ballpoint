@@ -101,6 +101,11 @@ func TestParseGitHubIssuePullCommit(t *testing.T) {
 		{"pull", "https://github.com/bashfulrobot/ballpoint/pull/12", "bashfulrobot/ballpoint/pull/12", "pull", "12"},
 		{"pull files tab", "https://github.com/bashfulrobot/ballpoint/pull/12/files", "bashfulrobot/ballpoint/pull/12", "pull", "12"},
 		{"commit", "https://github.com/bashfulrobot/ballpoint/commit/abcdef0123456789", "bashfulrobot/ballpoint/commit/abcdef0123456789", "commit", "abcdef0123456789"},
+		{"trailing slash", "https://github.com/bashfulrobot/ballpoint/issues/45/", "bashfulrobot/ballpoint/issue/45", "issue", "45"},
+		{"query string", "https://github.com/bashfulrobot/ballpoint/issues/45?utm=x", "bashfulrobot/ballpoint/issue/45", "issue", "45"},
+		{"nested pull commits resolves to the pull", "https://github.com/bashfulrobot/ballpoint/pull/12/commits/abcdef0", "bashfulrobot/ballpoint/pull/12", "pull", "12"},
+		{"uppercase owner and repo dedup to lowercase", "https://github.com/BashfulRobot/Ballpoint/issues/45", "bashfulrobot/ballpoint/issue/45", "issue", "45"},
+		{"dotted repo name is kept", "https://github.com/bashfulrobot/.github/issues/45", "bashfulrobot/.github/issue/45", "issue", "45"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,8 +119,8 @@ func TestParseGitHubIssuePullCommit(t *testing.T) {
 			if f["id"] != tc.wantID {
 				t.Errorf("id = %q, want %q", f["id"], tc.wantID)
 			}
-			if f["owner"] != "bashfulrobot" || f["repo"] != "ballpoint" {
-				t.Errorf("owner/repo = %q/%q, want bashfulrobot/ballpoint", f["owner"], f["repo"])
+			if got := f["owner"] + "/" + f["repo"] + "/" + f["kind"] + "/" + f["id"]; got != tc.wantRec {
+				t.Errorf("fields reconstruct %q, want the record %q", got, tc.wantRec)
 			}
 		})
 	}
@@ -129,6 +134,10 @@ func TestParseGitHubUnparseable(t *testing.T) {
 		"https://github.com/bashfulrobot/ballpoint/releases/tag/v1",   // release
 		"https://github.com/bashfulrobot/ballpoint/issues/notanumber", // bad id
 		"https://github.com/bashfulrobot/ballpoint/commit/xyz",        // non-hex sha
+		"https://github.example.com/o/r/issues/5",                     // enterprise host, not probed
+		"https://gist.github.com/o/deadbeef",                          // gist host, not a repo item
+		"https://evil.com/x?ref=github.com/o/r/issues/5",              // github.com only in the query
+		"https://github.com/o/../issues/5",                            // path-traversal repo segment
 	} {
 		if rec, _ := parseGitHub(u); rec != "" {
 			t.Errorf("record = %q, want empty for %q", rec, u)

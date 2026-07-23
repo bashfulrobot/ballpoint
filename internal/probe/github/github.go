@@ -155,7 +155,10 @@ func invalid(l links.Link) (probe.Reason, bool) {
 	if _, ok := endpointForKind[kind]; !ok {
 		return probe.ReasonError, true
 	}
-	if !ghOwnerCharset.MatchString(owner) || !ghRepoCharset.MatchString(repo) {
+	// The repo charset admits dot (a real name like .github), so "." and ".." pass
+	// it; reject them explicitly, or a tampered record could build a traversal
+	// segment like repos/o/../issues/5.
+	if !ghOwnerCharset.MatchString(owner) || !ghRepoCharset.MatchString(repo) || repo == "." || repo == ".." {
 		return probe.ReasonError, true
 	}
 	if kind == "commit" {
@@ -205,8 +208,12 @@ func (c *Client) probeOne(ctx context.Context, l links.Link) probe.Result {
 
 // authMarkers are the substrings gh emits on an authentication failure, whether
 // the request returned HTTP 401 or gh refused to run because no token is
-// configured. Matching keeps the ReasonAuth versus ReasonError label
-// trustworthy; a generic API or network failure stays ReasonError.
+// configured. This is a free-text scan, unlike the salesforce prober's
+// structured error name, so it can mislabel in both directions (a 404 body that
+// mentions authentication, or a logged-out gh whose wording matches no marker).
+// The label is diagnostic only: both ReasonAuth and ReasonError render the link
+// unchecked, so a misclassification never threatens the unchecked invariant. Any
+// non-auth failure (a 404 for a moved item, a network error) stays ReasonError.
 var authMarkers = []string{
 	"http 401",
 	"bad credentials",

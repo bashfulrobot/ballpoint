@@ -106,25 +106,64 @@ func TestProbeAuthVsError(t *testing.T) {
 	}
 }
 
-// A record whose fields fail the charset never reaches the runner. This is the
-// injection guard against a tampered on-disk cache.
+// A record whose fields fail validation never reaches the runner. This is the
+// injection guard against a tampered on-disk cache. The dot-segment cases (".",
+// "..") are the traversal guard: the repo charset admits dot, so these have to be
+// rejected explicitly or they would build a path like repos/o/../issues/45.
 func TestProbeInjectionGuard(t *testing.T) {
+	cases := []struct {
+		name            string
+		owner, repo, id string
+		kind            string
+	}{
+		{"repo with slash", "o", "r/../secrets", "issue", "45"},
+		{"repo is dotdot", "o", "..", "issue", "45"},
+		{"repo is dot", "o", ".", "issue", "45"},
+		{"owner leading dash", "-o", "r", "issue", "45"},
+		{"id not a number", "o", "r", "issue", "45x"},
+		{"commit id not hex", "o", "r", "commit", "nothex"},
+		{"unknown kind", "o", "r", "wiki", "45"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			c := New(WithRunner(func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+				called = true
+				return []byte(okIssue), nil
+			}))
+			l := links.Link{
+				System: links.SystemGitHub,
+				Record: tc.owner + "/" + tc.repo + "/" + tc.kind + "/" + tc.id,
+				Fields: map[string]string{"owner": tc.owner, "repo": tc.repo, "kind": tc.kind, "id": tc.id},
+			}
+			out, _ := c.Probe(context.Background(), []links.Link{l}, sources.Watermark{})
+			if r := out[l.Key()]; !r.Unchecked || r.Reason != probe.ReasonError {
+				t.Errorf("result = %+v, want unchecked ReasonError", r)
+			}
+			if called {
+				t.Error("runner was called with an unvalidated record; the guard must run first")
+			}
+		})
+	}
+}
+
+// A cancelled context renders unchecked (a timeout reason), never a false
+// unchanged, and the limiter wait is where the cancellation is caught.
+func TestProbeContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 	called := false
 	c := New(WithRunner(func(_ context.Context, _ string, _ ...string) ([]byte, error) {
 		called = true
 		return []byte(okIssue), nil
 	}))
-	l := links.Link{
-		System: links.SystemGitHub,
-		Record: "o/r/issue/45",
-		Fields: map[string]string{"owner": "o", "repo": "r/../secrets", "kind": "issue", "id": "45"},
-	}
-	out, _ := c.Probe(context.Background(), []links.Link{l}, sources.Watermark{})
-	if r := out[l.Key()]; !r.Unchecked || r.Reason != probe.ReasonError {
-		t.Errorf("result = %+v, want unchecked ReasonError for a bad repo", r)
+	l := ghLink("bashfulrobot", "ballpoint", "issue", "45")
+	out, _ := c.Probe(ctx, []links.Link{l}, sources.Watermark{})
+	if r := out[l.Key()]; !r.Unchecked || r.Reason != probe.ReasonTimeout {
+		t.Errorf("result = %+v, want unchecked ReasonTimeout on a cancelled context", r)
 	}
 	if called {
-		t.Error("runner was called with an unvalidated record; the guard must run first")
+		t.Error("runner ran despite a cancelled context; the limiter wait must short-circuit")
 	}
 }
 
