@@ -13,6 +13,7 @@ import (
 	"github.com/bashfulrobot/ballpoint/internal/config"
 	"github.com/bashfulrobot/ballpoint/internal/links"
 	"github.com/bashfulrobot/ballpoint/internal/probe"
+	"github.com/bashfulrobot/ballpoint/internal/probe/github"
 	"github.com/bashfulrobot/ballpoint/internal/probe/gwsauth"
 	"github.com/bashfulrobot/ballpoint/internal/probe/probeset"
 	"github.com/bashfulrobot/ballpoint/internal/probe/salesforce"
@@ -64,6 +65,9 @@ func resolveProbeDeps(f probeFlags, stderr io.Writer) (probeDeps, error) {
 	// Salesforce auth lives in the sf CLI's own store, not this secrets file, so
 	// the prober is gated on the binary being present rather than a token.
 	deps.creds.Salesforce = salesforce.Available()
+	// GitHub auth lives in the gh CLI's own store, not this secrets file, so the
+	// prober is gated on the binary being present rather than a token.
+	deps.creds.GitHub = github.Available()
 
 	token, err := secrets.Load(path, "todoist_token")
 	if err != nil {

@@ -77,7 +77,7 @@ same thread keys the same way on every run.
 
 ### Probers and unchecked sources
 
-Five systems ship a prober: Slack, Gmail, Aha, Drive, and Salesforce. Slack
+Six systems ship a prober: Slack, Gmail, Aha, Drive, Salesforce, and GitHub. Slack
 collapses to one history call per channel. Gmail, Aha, and Drive query each linked
 record by id (a thread, an idea, a file) for its absolute last activity time, so a
 record the API cannot confirm renders `unchecked` rather than a false unchanged.
@@ -98,9 +98,16 @@ prefix with no object hint, a missing or unauthenticated CLI, a non-zero `sf`
 status, or a query error renders the affected links `unchecked`, never a false
 unchanged.
 
+GitHub follows the same CLI-owned pattern through the `gh` CLI (`gh api`), so
+there is no `github_token` key either. It parses an issue, pull request, or
+commit URL into an owner, repo, kind, and id, then reads each item's last update
+time (a commit's committer date, an issue or pull request's `updated_at`) with
+one `gh api` call per link under a per-run cap. A missing or logged-out `gh`, an
+HTTP error, or an unreadable timestamp renders the affected links `unchecked`.
+
 Everything else renders `unchecked` with a reason rather than a freshness
-verdict. Teams is `not probeable`. Jira and GitHub have `no probe available` in
-this release. A source whose credential is missing or whose token expired is
+verdict. Teams is `not probeable`. Jira and Confluence have `no probe available`
+in this release. A source whose credential is missing or whose token expired is
 `credentials missing or expired`.
 
 The unchecked invariant is what the engine guarantees. A prober that errors,
@@ -158,8 +165,8 @@ loaded the same way, at runtime, never from the environment or the store, and
 never logged. A missing key is not fatal. Aha links render `unchecked` for the
 run instead of failing it.
 
-Gmail, Drive, Slack, and Salesforce are the exceptions to the per-source token
-pattern. Their auth lives in another tool's store, not this secrets file, so
+Gmail, Drive, Slack, Salesforce, and GitHub are the exceptions to the per-source
+token pattern. Their auth lives in another tool's store, not this secrets file, so
 none has a key here.
 
 Gmail and Drive read the `gws` (Google Workspace CLI) store. Ballpoint exports
@@ -178,6 +185,10 @@ logged or placed in an error.
 Salesforce reads the `sf` CLI store, so there is no `salesforce_token` key. The
 prober registers when the `sf` binary is on PATH; when it is absent, Salesforce
 links render `unchecked` like any other unregistered source.
+
+GitHub reads the `gh` CLI store, so there is no `github_token` key. The prober
+registers when the `gh` binary is on PATH; when it is absent or logged out,
+GitHub links render `unchecked` like any other unregistered source.
 
 ## Benchmark
 

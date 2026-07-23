@@ -98,7 +98,8 @@ func categoriseURL(raw string) Link {
 		rec, f := parseSalesforce(raw)
 		return Link{System: SystemSalesforce, Raw: raw, Record: rec, Fields: f}
 	case strings.Contains(host, "github.com"):
-		return Link{System: SystemGitHub, Raw: raw}
+		rec, f := parseGitHub(raw)
+		return Link{System: SystemGitHub, Raw: raw, Record: rec, Fields: f}
 	case strings.Contains(host, "zoom.us"):
 		return Link{System: SystemZoom, Raw: raw}
 	case strings.Contains(host, "app.todoist.com"):
