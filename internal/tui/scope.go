@@ -48,8 +48,18 @@ func (s Scope) predicate() filterPredicate {
 	case ScopeAll:
 		return func(sources.Task) bool { return true }
 	case ScopeFilter, ScopePreset:
-		// Parse the Todoist filter subset the cache can answer offline. An
-		// expression the parser does not accept (unsupported term, malformed
+		// An empty (or whitespace-only) filter selects nothing. Without this guard
+		// the substring fallback below would call strings.Contains(x, ""), which is
+		// always true, so an empty value would match the whole corpus. The TUI
+		// reports the empty scope rather than hiding it.
+		if strings.TrimSpace(s.Value) == "" {
+			return func(sources.Task) bool { return false }
+		}
+		// Parse the Todoist filter subset the cache can answer offline. @label and
+		// #project are exact (case-insensitive) matches on the resolved name, so
+		// #Work does not match sub-projects of Work the way the Todoist server
+		// would; a name containing an operator character must be quoted (#"R&D").
+		// An expression the parser does not accept (unsupported term, malformed
 		// syntax) degrades to a case-insensitive substring over the title, labels,
 		// and section, so nothing regresses and the walk is never dropped.
 		if pred, ok := compileFilter(s.Value); ok {

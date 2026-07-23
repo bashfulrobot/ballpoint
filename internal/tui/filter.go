@@ -9,15 +9,20 @@ import (
 // filterPredicate reports whether a cached task satisfies a parsed filter.
 type filterPredicate func(sources.Task) bool
 
+// maxFilterDepth bounds parser recursion (nested parens and chained `!`), so a
+// pathological expression degrades to the substring fallback instead of growing
+// the stack. It is far above any hand-written filter.
+const maxFilterDepth = 64
+
 // compileFilter parses the Todoist filter subset the cache can answer offline
 // (@label, #project, p1..p4, and & | ! with parentheses) into a predicate over
-// cached tasks. ok is false for a malformed expression (unbalanced parens, a
-// dangling or leading binary operator, an empty expression), so the caller can
-// fall back to a substring match rather than dropping the walk. It never fetches
-// and never panics.
+// cached tasks. ok is false for a malformed expression (unbalanced parens or
+// quotes, a dangling or leading binary operator, an empty expression, or nesting
+// past maxFilterDepth), so the caller can fall back to a substring match rather
+// than dropping the walk. It never fetches and never panics.
 func compileFilter(expr string) (filterPredicate, bool) {
-	toks := tokenizeFilter(expr)
-	if len(toks) == 0 {
+	toks, ok := tokenizeFilter(expr)
+	if !ok || len(toks) == 0 {
 		return nil, false
 	}
 	p := &filterParser{toks: toks}
@@ -65,8 +70,12 @@ type filterToken struct {
 // tokenizeFilter splits an expression on the operators & | ! ( ), treating every
 // other run of characters (spaces included) as a single term. Splitting only on
 // operators means multi-word project or label names keep their internal spaces;
-// each term is trimmed and an empty term is dropped.
-func tokenizeFilter(expr string) []filterToken {
+// each term is trimmed and an empty term is dropped. A double-quoted span is a
+// literal: operators and spaces inside it join the current term, so a name that
+// contains an operator character can be written as #"R&D" or @"in progress". ok
+// is false for an unterminated quote, which lets the caller degrade the whole
+// expression to a substring rather than guessing.
+func tokenizeFilter(expr string) ([]filterToken, bool) {
 	var toks []filterToken
 	var buf strings.Builder
 	flush := func() {
@@ -76,8 +85,20 @@ func tokenizeFilter(expr string) []filterToken {
 			toks = append(toks, filterToken{kind: tokTerm, text: term})
 		}
 	}
-	for _, r := range expr {
-		switch r {
+	runes := []rune(expr)
+	for i := 0; i < len(runes); i++ {
+		switch runes[i] {
+		case '"':
+			// Consume the literal span up to the closing quote; its contents (any
+			// operator or space) join the current term buffer verbatim.
+			i++
+			for i < len(runes) && runes[i] != '"' {
+				buf.WriteRune(runes[i])
+				i++
+			}
+			if i >= len(runes) {
+				return nil, false // unterminated quote
+			}
 		case '&':
 			flush()
 			toks = append(toks, filterToken{kind: tokAnd})
@@ -94,11 +115,11 @@ func tokenizeFilter(expr string) []filterToken {
 			flush()
 			toks = append(toks, filterToken{kind: tokRParen})
 		default:
-			buf.WriteRune(r)
+			buf.WriteRune(runes[i])
 		}
 	}
 	flush()
-	return toks
+	return toks, true
 }
 
 // termPredicate compiles a single term into a predicate. @label and #project are
@@ -143,8 +164,9 @@ func isPriorityTerm(term string) bool {
 // filterParser is a recursive-descent parser over the token stream. Precedence,
 // tightest first: ! then & then |. Parentheses group.
 type filterParser struct {
-	toks []filterToken
-	pos  int
+	toks  []filterToken
+	pos   int
+	depth int // current nesting, bounded by maxFilterDepth
 }
 
 func (p *filterParser) atEnd() bool { return p.pos >= len(p.toks) }
@@ -158,6 +180,11 @@ func (p *filterParser) peek() (filterToken, bool) {
 
 // parseOr := parseAnd ( '|' parseAnd )*
 func (p *filterParser) parseOr() (filterPredicate, bool) {
+	p.depth++
+	defer func() { p.depth-- }()
+	if p.depth > maxFilterDepth {
+		return nil, false
+	}
 	left, ok := p.parseAnd()
 	if !ok {
 		return nil, false
@@ -202,6 +229,11 @@ func (p *filterParser) parseAnd() (filterPredicate, bool) {
 
 // parseNot := '!' parseNot | parsePrimary
 func (p *filterParser) parseNot() (filterPredicate, bool) {
+	p.depth++
+	defer func() { p.depth-- }()
+	if p.depth > maxFilterDepth {
+		return nil, false
+	}
 	t, ok := p.peek()
 	if !ok {
 		return nil, false

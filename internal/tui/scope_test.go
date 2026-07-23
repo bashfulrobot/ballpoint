@@ -77,6 +77,29 @@ func TestScopeFilterMalformedDegradesToSubstring(t *testing.T) {
 	}
 }
 
+func TestScopePresetUsesParser(t *testing.T) {
+	// ScopePreset shares the filter path, so the grammar applies to presets too.
+	tasks := []sources.Task{
+		{ID: "1", Labels: []string{"waiting"}},
+		{ID: "2", Labels: []string{"someday"}},
+	}
+	ids := Scope{Kind: ScopePreset, Value: "@waiting"}.Resolve(tasks)
+	if len(ids) != 1 || ids[0] != "1" {
+		t.Fatalf("preset @waiting = %v, want [1]", ids)
+	}
+}
+
+func TestScopeFilterEmptyMatchesNothing(t *testing.T) {
+	// An empty filter value must not fall through to substring "", which would
+	// match the whole corpus.
+	tasks := []sources.Task{{ID: "1", Title: "a"}, {ID: "2", Title: "b"}}
+	for _, v := range []string{"", "   "} {
+		if ids := (Scope{Kind: ScopeFilter, Value: v}).Resolve(tasks); len(ids) != 0 {
+			t.Errorf("empty filter %q = %v, want no matches", v, ids)
+		}
+	}
+}
+
 func TestScopeAll(t *testing.T) {
 	tasks := []sources.Task{{ID: "1"}, {ID: "2"}}
 	if ids := (Scope{Kind: ScopeAll}).Resolve(tasks); len(ids) != 2 {

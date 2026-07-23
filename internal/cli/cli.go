@@ -27,8 +27,9 @@ Usage:
 
 Flags:
   --project P      walk one project
-  --filter Q       walk a filter query, matched against the cache
-  --preset P       walk a named preset
+  --filter Q       walk a filter query against the cache: @label #project p1..p4,
+                   combined with & | ! and parens; other terms match as substrings
+  --preset P       walk a named preset (same query syntax as --filter)
   --task ID        walk a single task
   --scripts-dir D  override the triage macro scripts directory
   --refresh        run probe before walking to refresh the cache
@@ -95,8 +96,8 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	// token; a bare `ballpoint` with no scope flag opens the picker.
 	var wf walkFlags
 	fs.StringVar(&wf.project, "project", "", "walk one project")
-	fs.StringVar(&wf.filter, "filter", "", "walk a filter query, matched against the cache")
-	fs.StringVar(&wf.preset, "preset", "", "walk a named preset")
+	fs.StringVar(&wf.filter, "filter", "", "walk a filter query: @label #project p1..p4 with & | ! and parens; other terms match as substrings")
+	fs.StringVar(&wf.preset, "preset", "", "walk a named preset (same query syntax as --filter)")
 	fs.StringVar(&wf.task, "task", "", "walk a single task id")
 	fs.StringVar(&wf.scriptsDir, "scripts-dir", "", "override the triage macro scripts directory")
 	fs.BoolVar(&wf.refresh, "refresh", false, "run probe before walking to refresh the cache")
